@@ -69,7 +69,8 @@ pub fn run(opts: TailOptions) -> ExitCode {
     }
 
     // Time-window filtering (--since/--until). Implemented as a separate path
-    // because it filters line-by-line and ignores other bounded-read flags.
+    // because it filters line-by-line. `--lines`/`--bytes`/`--head`/`--reverse`
+    // are honoured *after* the window cut, capping the filtered set.
     let now_ms = now_ms();
     let since_ms = match since.as_deref().map(|s| parse_time_spec(s, now_ms)) {
         Some(Ok(t)) => Some(t),
@@ -120,6 +121,10 @@ pub fn run(opts: TailOptions) -> ExitCode {
             &mut file,
             since_ms,
             until_ms,
+            lines,
+            bytes_n,
+            head,
+            reverse,
             stripper.as_mut(),
             keep_timestamps,
             json,
@@ -221,8 +226,11 @@ fn validate_flag_combinations(
     if reverse && follow {
         return Err("--reverse and --follow can't combine".into());
     }
-    if reverse && lines.is_none() && !has_bytes {
-        return Err("--reverse requires --lines N or --bytes N (so the slice is bounded)".into());
+    if reverse && lines.is_none() && !has_bytes && !has_time_window {
+        return Err(
+            "--reverse requires --lines N, --bytes N, or --since/--until (so the slice is bounded)"
+                .into(),
+        );
     }
     if lines.is_some() && has_bytes {
         return Err("--lines and --bytes are mutually exclusive".into());
@@ -236,12 +244,9 @@ fn validate_flag_combinations(
     if json && follow {
         return Err("--json and --follow can't combine (use repeated --cursor reads instead)".into());
     }
-    if has_time_window
-        && (lines.is_some() || has_bytes || head.is_some() || reverse || cursor.is_some() || follow)
-    {
+    if has_time_window && (cursor.is_some() || follow) {
         return Err(
-            "--since / --until is mutually exclusive with --lines/--bytes/--head/--reverse/--cursor/--follow"
-                .into(),
+            "--since / --until is mutually exclusive with --cursor/--follow".into(),
         );
     }
     Ok(())
@@ -518,12 +523,22 @@ pub fn parse_time_spec(input: &str, now_ms: u64) -> Result<u64, String> {
 /// a parseable prefix are dropped silently (strict mode — keeps output
 /// trustworthy when the user expects time semantics).
 ///
+/// `--head N`, `--lines N`, `--bytes N`, and `--reverse` are applied *after*
+/// the window cut: the time filter selects a candidate set, then the cap
+/// narrows it. This composition is what lets agents say "last 30s, max 5
+/// lines" without writing a pipeline.
+///
 /// When `keep_timestamps` is true the prefix is preserved in the output; the
 /// default strips it for clean LLM consumption.
+#[allow(clippy::too_many_arguments)]
 fn emit_time_window(
     file: &mut fs::File,
     since_ms: Option<u64>,
     until_ms: Option<u64>,
+    lines: Option<u64>,
+    bytes_n: Option<u64>,
+    head: Option<u64>,
+    reverse: bool,
     stripper: Option<&mut AnsiStripper>,
     keep_timestamps: bool,
     json_mode: bool,
@@ -534,45 +549,14 @@ fn emit_time_window(
         return ExitCode::from(1);
     }
 
-    let mut emitted = Vec::<u8>::new();
-    let mut lines_emitted: u64 = 0;
     let mut buf = Vec::<u8>::new();
     if let Err(e) = file.read_to_end(&mut buf) {
         eprintln!("agent-term: tail: {e}");
         return ExitCode::from(1);
     }
-    let mut saw_timestamped_line = false;
-    let mut start = 0usize;
-    for i in 0..buf.len() {
-        if buf[i] != b'\n' {
-            continue;
-        }
-        let line = &buf[start..=i];
-        start = i + 1;
 
-        let Some((ts, body_start)) = parse_ms_prefix(line) else {
-            continue;
-        };
-        saw_timestamped_line = true;
-        if let Some(s) = since_ms {
-            if ts < s {
-                continue;
-            }
-        }
-        if let Some(u) = until_ms {
-            if ts > u {
-                // Lines are time-ordered, so we can stop early.
-                break;
-            }
-        }
-        let body = if keep_timestamps {
-            line
-        } else {
-            &line[body_start..]
-        };
-        emitted.extend_from_slice(body);
-        lines_emitted += 1;
-    }
+    let (filtered, saw_timestamped_line) =
+        filter_time_window(&buf, since_ms, until_ms, keep_timestamps);
 
     if !saw_timestamped_line {
         eprintln!(
@@ -581,6 +565,14 @@ fn emit_time_window(
         );
         return ExitCode::from(1);
     }
+
+    let capped = apply_post_filter_cap(filtered, head, lines, bytes_n, reverse);
+
+    let mut emitted = Vec::<u8>::new();
+    for line in &capped {
+        emitted.extend_from_slice(line);
+    }
+    let lines_emitted = capped.len() as u64;
 
     // ANSI strip if requested. We apply to the assembled output so the stripper
     // state machine doesn't have to span chunk boundaries.
@@ -609,6 +601,101 @@ fn emit_time_window(
         }
     }
     ExitCode::SUCCESS
+}
+
+/// Walk `buf` line-by-line, returning every line whose `[ms]` timestamp falls
+/// in `[since, until]`. Each returned line includes its trailing `\n` (or is
+/// the final fragment if the file ends without one).
+///
+/// The second tuple element is `true` if *any* line had a parseable prefix —
+/// used by the caller to distinguish "no matches" from "no timestamps at all"
+/// (the latter is a usage error, not an empty result).
+fn filter_time_window(
+    buf: &[u8],
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
+    keep_timestamps: bool,
+) -> (Vec<Vec<u8>>, bool) {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let mut saw_timestamped = false;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < buf.len() {
+        if buf[i] != b'\n' {
+            i += 1;
+            continue;
+        }
+        let line = &buf[start..=i];
+        start = i + 1;
+        i += 1;
+
+        let Some((ts, body_start)) = parse_ms_prefix(line) else {
+            continue;
+        };
+        saw_timestamped = true;
+        if let Some(s) = since_ms {
+            if ts < s {
+                continue;
+            }
+        }
+        if let Some(u) = until_ms {
+            if ts > u {
+                // Lines are time-ordered: nothing after this can match.
+                return (out, saw_timestamped);
+            }
+        }
+        let slice = if keep_timestamps {
+            line
+        } else {
+            &line[body_start..]
+        };
+        out.push(slice.to_vec());
+    }
+    (out, saw_timestamped)
+}
+
+/// Apply `--head`/`--lines`/`--bytes`/`--reverse` to the filtered line list.
+/// Only one of head/lines/bytes is active at a time (mutex enforced by
+/// `validate_flag_combinations`), so the branches form an if/else-if chain.
+///
+/// `--bytes` keeps trailing whole lines whose cumulative size is ≤ n
+/// (line-aligned, never partial — matches `seek_to_last_n_bytes` semantics:
+/// if even the last line by itself exceeds n, the result is empty).
+fn apply_post_filter_cap(
+    mut filtered: Vec<Vec<u8>>,
+    head: Option<u64>,
+    lines: Option<u64>,
+    bytes_n: Option<u64>,
+    reverse: bool,
+) -> Vec<Vec<u8>> {
+    if let Some(n) = head {
+        let n = n as usize;
+        if filtered.len() > n {
+            filtered.truncate(n);
+        }
+    } else if let Some(n) = lines {
+        let n = n as usize;
+        if filtered.len() > n {
+            let drop = filtered.len() - n;
+            filtered.drain(..drop);
+        }
+    } else if let Some(n) = bytes_n {
+        let mut total: u64 = 0;
+        let mut keep_from = filtered.len();
+        for i in (0..filtered.len()).rev() {
+            let sz = filtered[i].len() as u64;
+            if total + sz > n {
+                break;
+            }
+            total += sz;
+            keep_from = i;
+        }
+        filtered.drain(..keep_from);
+    }
+    if reverse {
+        filtered.reverse();
+    }
+    filtered
 }
 
 // ----------------------- JSON envelope emitter -----------------------
@@ -1165,21 +1252,462 @@ mod tests {
 
     // ---------- time-window flag mutex ----------
 
+    // Time-window selectors COMBINE with --lines/--bytes/--head/--reverse: the
+    // window picks candidates, the cap narrows them. They remain mutex with
+    // --cursor and --follow (different access patterns).
+
     #[test]
-    fn validates_time_window_vs_bounded() {
-        // since + lines → error
+    fn validates_time_window_with_lines_ok() {
         assert!(
             validate_flag_combinations(Some(5), false, None, false, false, None, false, true)
-                .is_err()
+                .is_ok()
         );
-        // since + cursor → error
+    }
+
+    #[test]
+    fn validates_time_window_with_bytes_ok() {
+        assert!(
+            validate_flag_combinations(None, true, None, false, false, None, false, true).is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_time_window_with_head_ok() {
+        assert!(
+            validate_flag_combinations(None, false, Some(5), false, false, None, false, true)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_time_window_with_reverse_alone_ok() {
+        // Without time-window, --reverse alone errors (needs a bound). With
+        // --since/--until providing the bound, it's permitted.
+        assert!(
+            validate_flag_combinations(None, false, None, true, false, None, false, true).is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_time_window_with_reverse_and_lines_ok() {
+        assert!(
+            validate_flag_combinations(Some(5), false, None, true, false, None, false, true)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_time_window_with_reverse_and_bytes_ok() {
+        assert!(
+            validate_flag_combinations(None, true, None, true, false, None, false, true).is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_time_window_still_mutex_with_cursor() {
         assert!(
             validate_flag_combinations(None, false, None, false, false, Some(0), false, true)
                 .is_err()
         );
-        // since + follow → error
+    }
+
+    #[test]
+    fn validates_time_window_still_mutex_with_follow() {
         assert!(
             validate_flag_combinations(None, false, None, false, true, None, false, true).is_err()
         );
+    }
+
+    #[test]
+    fn validates_reverse_without_bound_still_errors() {
+        // Without --lines, --bytes, or --since/--until, --reverse has no bound.
+        assert!(
+            validate_flag_combinations(None, false, None, true, false, None, false, false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn validates_head_still_mutex_with_lines_under_time_window() {
+        // --head excludes --lines/--bytes/--reverse regardless of time window.
+        assert!(
+            validate_flag_combinations(Some(3), false, Some(5), false, false, None, false, true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn validates_head_still_mutex_with_reverse_under_time_window() {
+        assert!(
+            validate_flag_combinations(None, false, Some(5), true, false, None, false, true)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn validates_lines_bytes_still_mutex_under_time_window() {
+        assert!(
+            validate_flag_combinations(Some(5), true, None, false, false, None, false, true)
+                .is_err()
+        );
+    }
+
+    // ---------- filter_time_window ----------
+
+    fn ts_line(ts: u64, body: &str) -> String {
+        format!("[{ts}] {body}\n")
+    }
+
+    fn ts_log(lines: &[(u64, &str)]) -> Vec<u8> {
+        let mut out = String::new();
+        for (ts, body) in lines {
+            out.push_str(&ts_line(*ts, body));
+        }
+        out.into_bytes()
+    }
+
+    #[test]
+    fn filter_time_window_since_only() {
+        let buf = ts_log(&[(100, "a"), (200, "b"), (300, "c")]);
+        let (lines, saw) = filter_time_window(&buf, Some(150), None, false);
+        assert!(saw);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], b"b\n");
+        assert_eq!(lines[1], b"c\n");
+    }
+
+    #[test]
+    fn filter_time_window_until_only_short_circuits() {
+        let buf = ts_log(&[(100, "a"), (200, "b"), (300, "c")]);
+        let (lines, saw) = filter_time_window(&buf, None, Some(199), false);
+        assert!(saw);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], b"a\n");
+    }
+
+    #[test]
+    fn filter_time_window_both_bounds_inclusive() {
+        let buf = ts_log(&[(100, "a"), (200, "b"), (300, "c"), (400, "d")]);
+        let (lines, _) = filter_time_window(&buf, Some(200), Some(300), false);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], b"b\n");
+        assert_eq!(lines[1], b"c\n");
+    }
+
+    #[test]
+    fn filter_time_window_keep_timestamps() {
+        let buf = ts_log(&[(100, "hi"), (200, "bye")]);
+        let (lines, _) = filter_time_window(&buf, Some(150), None, true);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], b"[200] bye\n");
+    }
+
+    #[test]
+    fn filter_time_window_no_timestamped_lines() {
+        let buf = b"plain line\nanother\n".to_vec();
+        let (lines, saw) = filter_time_window(&buf, Some(0), None, false);
+        assert_eq!(lines.len(), 0);
+        assert!(!saw);
+    }
+
+    #[test]
+    fn filter_time_window_skips_unprefixed_interleaved() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(ts_line(100, "good").as_bytes());
+        buf.extend_from_slice(b"junk no prefix\n");
+        buf.extend_from_slice(ts_line(200, "also good").as_bytes());
+        let (lines, saw) = filter_time_window(&buf, None, None, false);
+        assert!(saw);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], b"good\n");
+        assert_eq!(lines[1], b"also good\n");
+    }
+
+    // ---------- apply_post_filter_cap ----------
+
+    fn lines_of(items: &[&str]) -> Vec<Vec<u8>> {
+        items.iter().map(|s| s.as_bytes().to_vec()).collect()
+    }
+
+    fn dump(lines: &[Vec<u8>]) -> String {
+        let mut s = String::new();
+        for l in lines {
+            s.push_str(&String::from_utf8_lossy(l));
+        }
+        s
+    }
+
+    #[test]
+    fn cap_no_flags_passthrough() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n", "c\n"]),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert_eq!(dump(&got), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn cap_lines_keeps_tail() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n", "c\n", "d\n"]),
+            None,
+            Some(2),
+            None,
+            false,
+        );
+        assert_eq!(dump(&got), "c\nd\n");
+    }
+
+    #[test]
+    fn cap_lines_more_than_present_keeps_all() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n"]),
+            None,
+            Some(99),
+            None,
+            false,
+        );
+        assert_eq!(dump(&got), "a\nb\n");
+    }
+
+    #[test]
+    fn cap_head_keeps_first_n() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n", "c\n", "d\n"]),
+            Some(2),
+            None,
+            None,
+            false,
+        );
+        assert_eq!(dump(&got), "a\nb\n");
+    }
+
+    #[test]
+    fn cap_head_more_than_present_keeps_all() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n"]),
+            Some(99),
+            None,
+            None,
+            false,
+        );
+        assert_eq!(dump(&got), "a\nb\n");
+    }
+
+    #[test]
+    fn cap_bytes_keeps_trailing_whole_lines() {
+        // last 6 bytes worth of whole lines: "delta\n" = 6, plus "gamma\n" = 6
+        // → 12 > 6 so stop after delta. Only "delta\n" fits.
+        let got = apply_post_filter_cap(
+            lines_of(&["alpha\n", "beta\n", "gamma\n", "delta\n"]),
+            None,
+            None,
+            Some(6),
+            false,
+        );
+        assert_eq!(dump(&got), "delta\n");
+    }
+
+    #[test]
+    fn cap_bytes_fits_multiple_lines() {
+        // Two 6-byte lines fit in 12 bytes.
+        let got = apply_post_filter_cap(
+            lines_of(&["alpha\n", "beta\n", "gamma\n", "delta\n"]),
+            None,
+            None,
+            Some(12),
+            false,
+        );
+        assert_eq!(dump(&got), "gamma\ndelta\n");
+    }
+
+    #[test]
+    fn cap_bytes_too_small_yields_empty() {
+        // last line "delta\n" = 6 bytes, n=3 → can't fit even one whole line.
+        let got = apply_post_filter_cap(
+            lines_of(&["alpha\n", "beta\n", "delta\n"]),
+            None,
+            None,
+            Some(3),
+            false,
+        );
+        assert_eq!(dump(&got), "");
+    }
+
+    #[test]
+    fn cap_reverse_only_no_bound() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n", "c\n"]),
+            None,
+            None,
+            None,
+            true,
+        );
+        assert_eq!(dump(&got), "c\nb\na\n");
+    }
+
+    #[test]
+    fn cap_reverse_and_lines_reverses_after_cap() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n", "c\n", "d\n"]),
+            None,
+            Some(2),
+            None,
+            true,
+        );
+        assert_eq!(dump(&got), "d\nc\n");
+    }
+
+    #[test]
+    fn cap_reverse_and_head_reverses_after_cap() {
+        let got = apply_post_filter_cap(
+            lines_of(&["a\n", "b\n", "c\n", "d\n"]),
+            Some(2),
+            None,
+            None,
+            true,
+        );
+        assert_eq!(dump(&got), "b\na\n");
+    }
+
+    #[test]
+    fn cap_reverse_and_bytes() {
+        // bytes=12 → keeps "gamma\n", "delta\n"; reverse → "delta\n", "gamma\n".
+        let got = apply_post_filter_cap(
+            lines_of(&["alpha\n", "beta\n", "gamma\n", "delta\n"]),
+            None,
+            None,
+            Some(12),
+            true,
+        );
+        assert_eq!(dump(&got), "delta\ngamma\n");
+    }
+
+    // ---------- emit_time_window integration ----------
+
+    fn write_log(content: &[u8]) -> NamedTempFile {
+        write_file(content)
+    }
+
+    fn run_emit(
+        log_bytes: &[u8],
+        since_ms: Option<u64>,
+        until_ms: Option<u64>,
+        lines: Option<u64>,
+        bytes_n: Option<u64>,
+        head: Option<u64>,
+        reverse: bool,
+    ) -> (Vec<u8>, ExitCode) {
+        let tmp = write_log(log_bytes);
+        let mut f = fs::File::open(tmp.path()).unwrap();
+        let mut out = Vec::new();
+        let code = emit_time_window(
+            &mut f, since_ms, until_ms, lines, bytes_n, head, reverse, None, false, false,
+            &mut out,
+        );
+        (out, code)
+    }
+
+    #[test]
+    fn emit_since_with_lines_caps_to_last_n_of_window() {
+        let buf = ts_log(&[
+            (100, "a"),
+            (200, "b"),
+            (300, "c"),
+            (400, "d"),
+            (500, "e"),
+        ]);
+        // since=200 → b/c/d/e; --lines 2 → d/e.
+        let (out, _) = run_emit(&buf, Some(200), None, Some(2), None, None, false);
+        assert_eq!(out, b"d\ne\n");
+    }
+
+    #[test]
+    fn emit_since_with_head_returns_first_n_of_window() {
+        let buf = ts_log(&[
+            (100, "a"),
+            (200, "b"),
+            (300, "c"),
+            (400, "d"),
+        ]);
+        // since=200 → b/c/d; --head 2 → b/c.
+        let (out, _) = run_emit(&buf, Some(200), None, None, None, Some(2), false);
+        assert_eq!(out, b"b\nc\n");
+    }
+
+    #[test]
+    fn emit_since_with_bytes_caps_trailing_window_bytes() {
+        let buf = ts_log(&[
+            (100, "alpha"),
+            (200, "beta"),
+            (300, "gamma"),
+            (400, "delta"),
+        ]);
+        // since=200 → "beta\n", "gamma\n", "delta\n" (5,6,6 bytes); --bytes 12
+        // → trailing whole lines summing to ≤12 = "gamma\n" + "delta\n" = 12.
+        let (out, _) = run_emit(&buf, Some(200), None, None, Some(12), None, false);
+        assert_eq!(out, b"gamma\ndelta\n");
+    }
+
+    #[test]
+    fn emit_since_with_reverse_alone_reverses_full_window() {
+        let buf = ts_log(&[(100, "a"), (200, "b"), (300, "c")]);
+        // since=200 → b, c → reversed → c, b.
+        let (out, _) = run_emit(&buf, Some(200), None, None, None, None, true);
+        assert_eq!(out, b"c\nb\n");
+    }
+
+    #[test]
+    fn emit_since_with_reverse_and_lines() {
+        let buf = ts_log(&[
+            (100, "a"),
+            (200, "b"),
+            (300, "c"),
+            (400, "d"),
+        ]);
+        // since=100 → a/b/c/d; --lines 2 → c/d; --reverse → d/c.
+        let (out, _) = run_emit(&buf, Some(100), None, Some(2), None, None, true);
+        assert_eq!(out, b"d\nc\n");
+    }
+
+    #[test]
+    fn emit_until_with_lines_caps_within_window() {
+        let buf = ts_log(&[
+            (100, "a"),
+            (200, "b"),
+            (300, "c"),
+            (400, "d"),
+        ]);
+        // until=300 → a/b/c; --lines 2 → b/c.
+        let (out, _) = run_emit(&buf, None, Some(300), Some(2), None, None, false);
+        assert_eq!(out, b"b\nc\n");
+    }
+
+    #[test]
+    fn emit_since_until_with_head_first_n_in_range() {
+        let buf = ts_log(&[
+            (100, "a"),
+            (200, "b"),
+            (300, "c"),
+            (400, "d"),
+            (500, "e"),
+        ]);
+        // [200, 400] → b/c/d; --head 1 → b.
+        let (out, _) = run_emit(&buf, Some(200), Some(400), None, None, Some(1), false);
+        assert_eq!(out, b"b\n");
+    }
+
+    #[test]
+    fn emit_time_window_no_timestamps_errors() {
+        let buf = b"no prefix here\nanother\n".to_vec();
+        let (out, code) = run_emit(&buf, Some(0), None, None, None, None, false);
+        // Error path returns ExitCode::from(1) and emits nothing to `out`.
+        assert!(out.is_empty());
+        // ExitCode doesn't impl PartialEq; convert via Debug.
+        let s = format!("{code:?}");
+        assert!(s.contains('1'), "expected non-zero exit code, got {s}");
     }
 }

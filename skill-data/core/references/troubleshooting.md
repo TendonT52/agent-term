@@ -102,6 +102,8 @@ The shell ate your regex. Two fixes:
 
 The regex engine is Rust's `regex` crate — full PCRE-lite syntax, no
 backreferences. Use `(?i)` for case-insensitive, `(?m)` for multiline.
+`grep` and `wait` also accept `-i`/`--ignore-case` directly if you'd
+rather not embed the flag in the pattern.
 
 ## The daemon is alive but `status` hangs
 

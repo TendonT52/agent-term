@@ -26,6 +26,7 @@ pub struct WaitOptions {
     pub strip_ansi: bool,
     pub match_full_line: bool,
     pub json: bool,
+    pub ignore_case: bool,
 }
 
 pub fn run(opts: WaitOptions) -> ExitCode {
@@ -38,6 +39,7 @@ pub fn run(opts: WaitOptions) -> ExitCode {
         strip_ansi,
         match_full_line,
         json,
+        ignore_case,
     } = opts;
 
     if !is_valid_id(&id) {
@@ -71,7 +73,11 @@ pub fn run(opts: WaitOptions) -> ExitCode {
         }
     };
 
-    let regex = match RegexBuilder::new(&pattern_text).multi_line(multiline).build() {
+    let regex = match RegexBuilder::new(&pattern_text)
+        .multi_line(multiline)
+        .case_insensitive(ignore_case)
+        .build()
+    {
         Ok(r) => r,
         Err(e) => {
             return fail_json_or_text(json, &format!("bad regex: {e}"), 1, |m| {
@@ -418,6 +424,19 @@ mod tests {
         assert!(parse_timeout("").is_err());
         assert!(parse_timeout("ms").is_err());
         assert!(parse_timeout("10x").is_err());
+    }
+
+    #[test]
+    fn case_insensitive_builder_matches_mixed_case() {
+        let re = RegexBuilder::new("ready")
+            .multi_line(false)
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        let mut cursor = 0;
+        let buf = b"booting\r\nREADY\r\n".to_vec();
+        let m = find_match(&re, &buf, false, false, &mut cursor).unwrap();
+        assert_eq!(m, "READY");
     }
 
     #[test]

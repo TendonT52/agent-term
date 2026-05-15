@@ -25,6 +25,7 @@ pub struct GrepOptions {
     pub match_full_line: bool,
     pub json: bool,
     pub multiline: bool,
+    pub ignore_case: bool,
 }
 
 #[derive(Debug)]
@@ -46,6 +47,7 @@ pub fn run(opts: GrepOptions) -> ExitCode {
         match_full_line,
         json,
         multiline,
+        ignore_case,
     } = opts;
 
     if !is_valid_id(&id) {
@@ -61,7 +63,11 @@ pub fn run(opts: GrepOptions) -> ExitCode {
         }
     };
 
-    let regex = match RegexBuilder::new(&pattern_text).multi_line(multiline).build() {
+    let regex = match RegexBuilder::new(&pattern_text)
+        .multi_line(multiline)
+        .case_insensitive(ignore_case)
+        .build()
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("agent-term: grep: bad regex: {e}");
@@ -338,6 +344,18 @@ mod tests {
         let body = "info ok\nERROR boom\ninfo ok\nERROR again\n";
         let lines = lines_of(body);
         let re = RegexBuilder::new("^ERROR").build().unwrap();
+        let hits = collect_hits(&lines, &re, None, None, false, None);
+        assert_eq!(hits.iter().map(|h| h.line_idx).collect::<Vec<_>>(), vec![1, 3]);
+    }
+
+    #[test]
+    fn case_insensitive_builder_matches_mixed_case() {
+        let body = "info ok\nError boom\nWARNING low\nerror again\n";
+        let lines = lines_of(body);
+        let re = RegexBuilder::new("error")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
         let hits = collect_hits(&lines, &re, None, None, false, None);
         assert_eq!(hits.iter().map(|h| h.line_idx).collect::<Vec<_>>(), vec![1, 3]);
     }

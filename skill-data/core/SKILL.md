@@ -203,6 +203,19 @@ agent-term tail $ID --since "30s ago" --until now # 30s ago to now
 agent-term tail $ID --since 500ms                 # last 500 ms
 ```
 
+`--since` / `--until` **combine** with `--lines` / `--bytes` / `--head` /
+`--reverse`. The time window picks candidates, the cap narrows them:
+
+```bash
+agent-term tail $ID --since 30s --lines 5        # last 5 lines from last 30s
+agent-term tail $ID --since 5m --reverse --lines 3 # same, newest-first
+agent-term tail $ID --since 1m --head 1          # first line in the last minute
+agent-term tail $ID --since 30s --reverse        # full window, newest-first
+```
+
+`--cursor` and `--follow` remain mutex with the time selectors (different
+access patterns).
+
 Without `--timestamps` at spawn time, time selectors error with a clear
 message. Time specs: `Nms` / `Ns` / `Nm` / `Nh` / `Nd`, the literal `now`,
 or an integer ms-since-epoch.
@@ -276,6 +289,42 @@ agent-term kill $ID --signal HUP             # other signals: INT, USR1, KILL, .
 `kill` is graceful. **Don't reach for `--signal KILL` reflexively**; let the
 child clean up.
 
+### When *not* to kill
+
+A long-lived, reusable daemon (dev server, db, compose log stream, queue
+worker) should **outlive your turn**. Don't `kill` it just because you
+finished using it. The next turn — or another agent on the same project —
+should find it via `list` and reuse it. Killing it forces a 3–10 s
+cold-start on every reuse and, on shared projects, can stomp on a sibling
+session that's actively using it.
+
+Kill only when:
+
+- **You spawned it for a one-shot job** (a test run, a build) that has now
+  exited or whose output you've consumed.
+- **It's wedged** (`state=exited`, hung, or the log shows a fatal error).
+- **The user explicitly asks to stop it.**
+
+### Restart in place (do this for a fresh process)
+
+If a reusable daemon needs to come back fresh — config change, port
+collision, hung internal state, picking up new code that doesn't hot-reload —
+**restart it in place**: `kill` the existing id, then `spawn` again with the
+same `--name` (and same flags). Same name → callers find it by name on the
+next `list`. **Do not spawn a second one alongside.**
+
+```bash
+# Restart-in-place for a dev server you found via list.
+ID=$(agent-term list --json | jq -r '.[] | select(.name=="web") | .id')
+agent-term kill "$ID"
+ID=$(agent-term spawn --name web --timestamps -- npm run dev)
+agent-term wait "$ID" --pattern 'ready in [0-9]+ ms' --timeout 60s
+```
+
+This is the *only* sanctioned way to get a fresh process for a named role.
+A duplicate `spawn` without `kill` will either fail (name collision) or
+fight the original for the port.
+
 ## Hard rules
 
 These encode failure modes other agents have hit. Treat them as binding.
@@ -283,7 +332,13 @@ These encode failure modes other agents have hit. Treat them as binding.
 - **R0.** **`list` before every `spawn`.** Reuse a running daemon if one
   already serves the same role (dev server, db, compose log stream). A
   duplicate `spawn` of a port-binding service either fails outright or
-  silently doubles the work. Restart = `kill` + `spawn`, not two spawns.
+  silently doubles the work. Restart = `kill` + `spawn` *with the same
+  `--name`*, not two spawns.
+- **R0.5.** **Don't kill reusable daemons at end-of-task.** Dev servers, dbs,
+  compose log streams stay alive across turns and across sibling sessions —
+  that's the whole point of the detached daemon model. Only `kill` for
+  one-shot jobs that have served their purpose, wedged processes, or when
+  the user asks. For a fresh process: restart-in-place (same name).
 - **R1.** **Never unbounded `tail`.** On any log > 64 KiB, use `--lines N`,
   `--bytes N`, or `--since-cursor`. Call `summary` first if you don't know
   the size.

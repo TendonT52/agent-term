@@ -103,9 +103,14 @@ pub enum Command {
         /// Emit only lines whose timestamp prefix is at or after this time
         /// spec. Accepts `30s` / `5m` / `2h` / `1d` (relative to now), `now`,
         /// or an integer ms-since-epoch. Requires `spawn --timestamps`.
+        /// Combines with --lines / --bytes / --head / --reverse — the window
+        /// picks candidates, then the cap narrows them (e.g. `--since 30s
+        /// --lines 5` = the last 5 lines from the last 30 seconds).
         #[arg(long, value_name = "TIME")]
         since: Option<String>,
         /// Emit only lines whose timestamp is at or before this time spec.
+        /// Combines with --lines / --bytes / --head / --reverse the same way
+        /// as --since.
         #[arg(long, value_name = "TIME")]
         until: Option<String>,
         /// Preserve the `[<ms>] ` prefix in emitted lines (default strips it).
@@ -121,6 +126,10 @@ pub enum Command {
         /// Cap --grep matches.
         #[arg(long, value_name = "N")]
         limit: Option<u64>,
+        /// Case-insensitive matching for --grep. Equivalent to prefixing
+        /// the pattern with `(?i)`.
+        #[arg(short = 'i', long = "ignore-case")]
+        ignore_case: bool,
     },
     /// Block until a regex pattern matches in a subprocess's log.
     Wait {
@@ -151,6 +160,10 @@ pub enum Command {
         /// Emit a machine-readable JSON result on stdout instead of plain text.
         #[arg(long)]
         json: bool,
+        /// Case-insensitive matching. Equivalent to prefixing the pattern
+        /// with `(?i)`.
+        #[arg(short = 'i', long = "ignore-case")]
+        ignore_case: bool,
     },
     /// Send a signal to a managed subprocess.
     Kill {
@@ -190,6 +203,10 @@ pub enum Command {
         /// Enable multi-line regex semantics so `^`/`$` honour line boundaries.
         #[arg(long)]
         multiline: bool,
+        /// Case-insensitive matching. Equivalent to prefixing the pattern
+        /// with `(?i)`.
+        #[arg(short = 'i', long = "ignore-case")]
+        ignore_case: bool,
     },
     /// Read an explicit byte-range or time-range slice of a managed log.
     /// Two selector families, mutually exclusive: time (`--from/--to`,
@@ -237,12 +254,17 @@ pub enum Command {
     },
     /// Diagnose the daemon state directory: live/stale/orphans and misuse heuristics.
     Doctor {
-        /// Clean up stale sidecars and kill orphan children.
+        /// Clean up stale sidecars, kill orphan children, and delete orphan
+        /// logs older than `--log-age-days`.
         #[arg(long)]
         fix: bool,
         /// Emit machine-readable JSON instead of a human-friendly summary.
         #[arg(long)]
         json: bool,
+        /// Age threshold in days for `--fix` orphan-log cleanup. 0 deletes
+        /// every orphan log. Default keeps recent post-mortem logs reachable.
+        #[arg(long, value_name = "DAYS", default_value_t = crate::doctor::DEFAULT_LOG_AGE_DAYS)]
+        log_age_days: u32,
     },
     /// Print bundled skill documentation. The content is embedded at compile
     /// time so it always matches the installed version.
@@ -300,6 +322,7 @@ pub fn run(cli: Cli) -> ExitCode {
             grep,
             around,
             limit,
+            ignore_case,
         } => {
             // `tail --grep PATTERN` is sugar over `agent-term grep`.
             if let Some(pat) = grep {
@@ -315,6 +338,7 @@ pub fn run(cli: Cli) -> ExitCode {
                     match_full_line: false,
                     json,
                     multiline: false,
+                    ignore_case,
                 });
             }
             crate::tail::run(crate::tail::TailOptions {
@@ -341,6 +365,7 @@ pub fn run(cli: Cli) -> ExitCode {
             strip_ansi,
             match_full_line,
             json,
+            ignore_case,
         } => crate::wait::run(crate::wait::WaitOptions {
             id,
             pattern,
@@ -350,6 +375,7 @@ pub fn run(cli: Cli) -> ExitCode {
             strip_ansi,
             match_full_line,
             json,
+            ignore_case,
         }),
         Command::Grep {
             id,
@@ -363,6 +389,7 @@ pub fn run(cli: Cli) -> ExitCode {
             match_full_line,
             json,
             multiline,
+            ignore_case,
         } => crate::grep::run(crate::grep::GrepOptions {
             id,
             pattern,
@@ -375,6 +402,7 @@ pub fn run(cli: Cli) -> ExitCode {
             match_full_line,
             json,
             multiline,
+            ignore_case,
         }),
         Command::Slice {
             id,
@@ -408,9 +436,15 @@ pub fn run(cli: Cli) -> ExitCode {
             error_pattern,
             warning_pattern,
         }),
-        Command::Doctor { fix, json } => {
-            crate::doctor::run(crate::doctor::DoctorOptions { fix, json })
-        }
+        Command::Doctor {
+            fix,
+            json,
+            log_age_days,
+        } => crate::doctor::run(crate::doctor::DoctorOptions {
+            fix,
+            json,
+            log_age_days,
+        }),
         Command::Skills { action } => match action {
             SkillsAction::List => crate::skills::run_list(),
             SkillsAction::Get { name, full } => crate::skills::run_get(&name, full),
@@ -606,18 +640,28 @@ fn run_list(
     // doubles as garbage collection.
     let mut metas = walk_and_clean_state_dir();
 
+    let tag_match = |m: &Meta| {
+        tag_filters
+            .iter()
+            .all(|(k, v)| m.tags.get(k).map(String::as_str) == Some(v.as_str()))
+    };
+
+    // Count entries that would have matched if --all were set. Used below
+    // to emit a hint when project-scoped list is empty but daemons exist
+    // elsewhere.
+    let elsewhere_total = if project_filter.is_some() {
+        metas.iter().filter(|(_, m)| tag_match(m)).count()
+    } else {
+        0
+    };
+
     metas.retain(|(_, m)| {
         if let Some(ref filter) = project_filter {
             if &m.project != filter {
                 return false;
             }
         }
-        for (k, v) in &tag_filters {
-            if m.tags.get(k).map(String::as_str) != Some(v.as_str()) {
-                return false;
-            }
-        }
-        true
+        tag_match(m)
     });
 
     metas.sort_by(|a, b| a.1.started_at.cmp(&b.1.started_at).then(a.0.cmp(&b.0)));
@@ -637,9 +681,32 @@ fn run_list(
         println!("{}", out);
     } else {
         render_table(&entries);
+        let elsewhere = elsewhere_total.saturating_sub(entries.len());
+        if let Some(hint) = empty_project_hint(entries.len(), elsewhere, project_filter.is_some())
+        {
+            eprintln!("{hint}");
+        }
     }
 
     ExitCode::SUCCESS
+}
+
+/// Returns the stderr hint to emit when a project-scoped `list` is empty
+/// but daemons exist in other projects. `None` means stay silent.
+///
+/// Kept pure (no filesystem, no Meta) so the matrix is easy to unit-test.
+fn empty_project_hint(
+    filtered_count: usize,
+    elsewhere_count: usize,
+    project_scoped: bool,
+) -> Option<String> {
+    if filtered_count == 0 && project_scoped && elsewhere_count > 0 {
+        Some(format!(
+            "agent-term: 0 in this project ({elsewhere_count} elsewhere — use --all)"
+        ))
+    } else {
+        None
+    }
 }
 
 /// Walk the state directory: collect (id, Meta) for every alive daemon and
@@ -1066,5 +1133,33 @@ mod schema_tests {
         let mut v = serde_json::to_value(&entry).unwrap();
         v.as_object_mut().unwrap().remove("id");
         assert!(validate(&schema, &v).is_err());
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::empty_project_hint;
+
+    #[test]
+    fn hints_when_project_scoped_empty_with_elsewhere() {
+        let hint = empty_project_hint(0, 3, true).expect("expected hint");
+        assert!(hint.contains("0 in this project"));
+        assert!(hint.contains("3 elsewhere"));
+        assert!(hint.contains("--all"));
+    }
+
+    #[test]
+    fn silent_when_all_scope() {
+        assert_eq!(empty_project_hint(0, 5, false), None);
+    }
+
+    #[test]
+    fn silent_when_matches_present() {
+        assert_eq!(empty_project_hint(2, 4, true), None);
+    }
+
+    #[test]
+    fn silent_when_no_daemons_anywhere() {
+        assert_eq!(empty_project_hint(0, 0, true), None);
     }
 }

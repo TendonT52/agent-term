@@ -71,15 +71,27 @@ agent-term tail <ID> [--lines N | --bytes N | --head N | --cursor POS | --since 
 | `--head N` | First N lines (startup investigation). |
 | `--reverse` | Emit lines newest-first. |
 | `--cursor POS` / `--since-cursor POS` | Read from byte offset POS to EOF. |
-| `--since SPEC` / `--until SPEC` | Time-window filter. Requires `--timestamps` spawn. |
+| `--since SPEC` / `--until SPEC` | Time-window filter. Requires `--timestamps` spawn. Combines with `--lines`/`--bytes`/`--head`/`--reverse`. |
 | `--strip-ansi` | Filter CSI escape sequences (colour codes, cursor moves). |
 | `--keep-timestamps` | Preserve the `[<ms>] ` prefix in output (default: stripped). |
-| `--grep PATTERN` | Sugar for `grep`; takes `--around`, `--limit`. |
+| `--grep PATTERN` | Sugar for `grep`; takes `--around`, `--limit`, `-i`/`--ignore-case`. |
 | `--follow` | Stream new bytes as they appear. |
 | `--json` | Emit a JSON envelope with `cursor`, `content`, `lines_emitted`, etc. |
 
 **Never run `tail $ID` without one of `--lines`, `--bytes`, `--head`,
 `--cursor`, or `--since`.** The default is "dump everything".
+
+**Composition with `--since`/`--until`:** the time window picks candidate
+lines first, then `--lines N` / `--bytes N` / `--head N` / `--reverse` cap
+the result. Useful patterns:
+
+- `tail $ID --since 30s --lines 5` — last 5 lines from the last 30 seconds.
+- `tail $ID --since 5m --reverse --lines 3` — same, newest-first.
+- `tail $ID --since 1m --head 1` — first line that appeared in the last minute.
+- `tail $ID --since 30s --reverse` — full last-30s window, newest-first.
+
+`--since`/`--until` remain mutually exclusive with `--cursor` and `--follow`
+(those are different access patterns: incremental polling and streaming).
 
 ## `grep` — pattern-match the log
 
@@ -97,6 +109,7 @@ agent-term grep <ID> --pattern <REGEX> [...]
 | `--strip-ansi` | Strip colour codes before matching. |
 | `--match-full-line` | Match the regex against the full line, not the body. By default the timestamp prefix is stripped before matching. |
 | `--multiline` | Multiline regex semantics (`^`/`$` honour internal line boundaries). |
+| `-i`, `--ignore-case` | Case-insensitive matching. Same effect as prefixing the pattern with `(?i)`. |
 | `--json` | Structured output: hits, blocks, line numbers, timestamps. |
 
 ## `slice` — explicit range read
@@ -127,6 +140,7 @@ agent-term wait <ID> --pattern <REGEX> --timeout <DUR> [--multiline] [--json]
 | `--pattern-file <PATH>` | Read regex from file. |
 | `--timeout <DUR>` | Max wait. Suffixes: `ms`, `s` (default), `m`, `h`. Required in practice. |
 | `--multiline` | Enable `(?m)` semantics. |
+| `-i`, `--ignore-case` | Case-insensitive matching. Same effect as prefixing the pattern with `(?i)`. |
 | `--json` | Emit JSON envelope. |
 
 **Exit codes**:

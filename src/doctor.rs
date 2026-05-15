@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,9 +16,15 @@ const MISUSE_COUNT: usize = 10;
 const MISUSE_DURATION_MS: u64 = 2_000;
 const MISUSE_WINDOW_SECS: u64 = 3_600;
 
+/// Default age threshold for `--fix`-driven orphan-log cleanup.
+pub const DEFAULT_LOG_AGE_DAYS: u32 = 7;
+
 pub struct DoctorOptions {
     pub fix: bool,
     pub json: bool,
+    /// Age threshold in days for `--fix` orphan-log cleanup. 0 deletes all
+    /// orphan logs unconditionally. Ignored unless `fix` is set.
+    pub log_age_days: u32,
 }
 
 pub fn run(opts: DoctorOptions) -> ExitCode {
@@ -28,15 +35,16 @@ pub fn run(opts: DoctorOptions) -> ExitCode {
             .unwrap_or_else(|_| "{}".into());
         println!("{}", body);
     } else {
-        print_human(&report);
+        print_human(&report, opts.log_age_days);
     }
 
     if opts.fix {
-        apply_fixes(&report);
+        apply_fixes(&report, opts.log_age_days);
     }
 
     // Exit code: 0 if no problems or all fixed; 1 if there are issues and
-    // --fix was not specified.
+    // --fix was not specified. Orphan logs are advisory only — they're a
+    // by-design artifact, not a malfunction — and so do not bump the code.
     let has_issues = !report.stale.is_empty()
         || !report.orphans.is_empty()
         || !report.warnings.is_empty();
@@ -57,6 +65,10 @@ pub struct DoctorReport {
     /// Children whose parent daemon vanished (typically because the daemon
     /// was SIGKILLed and couldn't run its cleanup).
     pub orphans: Vec<OrphanEntry>,
+    /// `.log` / `.log.N` files whose owning daemon is gone. Intentionally
+    /// retained for post-mortem `grep`/`slice`/`summary`, but surfaced here so
+    /// they don't masquerade as a failed spawn and so `--fix` can GC old ones.
+    pub orphan_logs: Vec<OrphanLogEntry>,
     /// Free-form advisory messages (misuse heuristic, version skew, etc).
     pub warnings: Vec<String>,
 }
@@ -82,6 +94,15 @@ pub struct OrphanEntry {
     pub child_pid: u32,
 }
 
+#[derive(Serialize)]
+pub struct OrphanLogEntry {
+    pub id: String,
+    /// Filename, e.g. `abcd1234.log` or `abcd1234.log.2`.
+    pub file: String,
+    pub age_secs: u64,
+    pub size_bytes: u64,
+}
+
 fn scan(_opts: &DoctorOptions) -> DoctorReport {
     let dir = get_state_dir();
     let mut report = DoctorReport::default();
@@ -93,9 +114,18 @@ fn scan(_opts: &DoctorOptions) -> DoctorReport {
 
     let mut sock_ids: Vec<String> = Vec::new();
     let mut meta_ids: Vec<String> = Vec::new();
+    let mut log_files: Vec<(String, String)> = Vec::new(); // (id, filename)
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(id) = parse_log_filename(&name) {
+            log_files.push((id, name));
+            continue;
+        }
         if let Some(id) = name.strip_suffix(".sock") {
             if !id.is_empty() {
                 sock_ids.push(id.to_string());
@@ -190,6 +220,26 @@ fn scan(_opts: &DoctorOptions) -> DoctorReport {
         }
     }
 
+    // Orphan log files: `.log` / `.log.N` with no live daemon. These are
+    // retained on purpose (post-mortem grep/slice), but surfacing them here
+    // closes the "did my spawn fail?" gap when a state dir accumulates them.
+    for (id, file) in &log_files {
+        if pid_path(id).exists() {
+            continue;
+        }
+        let path = dir.join(file);
+        let (age_secs, size_bytes) = log_stats(&path, now);
+        report.orphan_logs.push(OrphanLogEntry {
+            id: id.clone(),
+            file: file.clone(),
+            age_secs,
+            size_bytes,
+        });
+    }
+    report
+        .orphan_logs
+        .sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.file.cmp(&b.file)));
+
     // Misuse heuristic via recent.jsonl.
     if let Some(msg) = misuse_warning() {
         report.warnings.push(msg);
@@ -198,7 +248,42 @@ fn scan(_opts: &DoctorOptions) -> DoctorReport {
     report
 }
 
-fn apply_fixes(report: &DoctorReport) {
+/// Returns the bare daemon id if `name` matches `{id}.log` or `{id}.log.N`
+/// (where N is a non-negative integer). Returns None otherwise.
+fn parse_log_filename(name: &str) -> Option<String> {
+    if let Some(id) = name.strip_suffix(".log") {
+        if !id.is_empty() {
+            return Some(id.to_string());
+        }
+        return None;
+    }
+    let (head, num) = name.rsplit_once('.')?;
+    if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let id = head.strip_suffix(".log")?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+fn log_stats(path: &Path, now: u64) -> (u64, u64) {
+    let Ok(md) = fs::metadata(path) else {
+        return (0, 0);
+    };
+    let size = md.len();
+    let mtime_secs = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(now);
+    let age = now.saturating_sub(mtime_secs);
+    (age, size)
+}
+
+fn apply_fixes(report: &DoctorReport, log_age_days: u32) {
     for stale in &report.stale {
         cleanup_stale_files(&stale.id);
     }
@@ -218,12 +303,25 @@ fn apply_fixes(report: &DoctorReport) {
         // Also clean up the orphan's sidecars since the daemon is gone.
         cleanup_stale_files(&o.id);
     }
+
+    // Orphan-log GC. Threshold is age-based so logs from a still-relevant
+    // post-mortem window survive a casual `doctor --fix`. `log_age_days == 0`
+    // is the user explicitly asking for an unconditional sweep.
+    let threshold = (log_age_days as u64).saturating_mul(86_400);
+    let dir = get_state_dir();
+    for log in &report.orphan_logs {
+        if log.age_secs < threshold {
+            continue;
+        }
+        let _ = fs::remove_file(dir.join(&log.file));
+    }
 }
 
-fn print_human(report: &DoctorReport) {
+fn print_human(report: &DoctorReport, log_age_days: u32) {
     if report.live.is_empty()
         && report.stale.is_empty()
         && report.orphans.is_empty()
+        && report.orphan_logs.is_empty()
         && report.warnings.is_empty()
     {
         println!("agent-term: clean (no live, no stale, no orphans)");
@@ -258,11 +356,64 @@ fn print_human(report: &DoctorReport) {
             println!("  {} child_pid={}", o.id, o.child_pid);
         }
     }
+    if !report.orphan_logs.is_empty() {
+        let total_size: u64 = report.orphan_logs.iter().map(|l| l.size_bytes).sum();
+        let threshold_secs = (log_age_days as u64).saturating_mul(86_400);
+        let eligible = report
+            .orphan_logs
+            .iter()
+            .filter(|l| l.age_secs >= threshold_secs)
+            .count();
+        println!(
+            "orphan logs ({} files, {}; retained for post-mortem grep/slice/summary):",
+            report.orphan_logs.len(),
+            format_bytes(total_size),
+        );
+        for l in &report.orphan_logs {
+            println!(
+                "  {file:<22} age={age:<8} {size}",
+                file = l.file,
+                age = format_age(l.age_secs),
+                size = format_bytes(l.size_bytes),
+            );
+        }
+        println!(
+            "  hint: `agent-term doctor --fix --log-age-days {}` removes {} log(s) older than {} day(s)",
+            log_age_days, eligible, log_age_days,
+        );
+    }
     if !report.warnings.is_empty() {
         println!("warnings:");
         for w in &report.warnings {
             println!("  ! {w}");
         }
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.1}GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1}MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1}KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes}B")
+    }
+}
+
+fn format_age(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
     }
 }
 
@@ -416,6 +567,106 @@ mod tests {
         }
         fs::write(dir.path().join("recent.jsonl"), long).unwrap();
         assert!(misuse_warning().is_none());
+
+        match prev {
+            Some(v) => std::env::set_var("AGENT_TERM_STATE_DIR", v),
+            None => std::env::remove_var("AGENT_TERM_STATE_DIR"),
+        }
+    }
+
+    #[test]
+    fn parse_log_filename_accepts_bare_and_rotated() {
+        assert_eq!(
+            parse_log_filename("abcd1234.log"),
+            Some("abcd1234".to_string())
+        );
+        assert_eq!(
+            parse_log_filename("abcd1234.log.1"),
+            Some("abcd1234".to_string())
+        );
+        assert_eq!(
+            parse_log_filename("abcd1234.log.42"),
+            Some("abcd1234".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_log_filename_rejects_non_log() {
+        assert_eq!(parse_log_filename("abcd1234.sock"), None);
+        assert_eq!(parse_log_filename("abcd1234.meta"), None);
+        assert_eq!(parse_log_filename("recent.jsonl"), None);
+        assert_eq!(parse_log_filename(".log"), None);
+        assert_eq!(parse_log_filename("abcd1234.log.tmp"), None);
+        // Trailing dot or non-numeric suffix after `.log.` is not a rotation segment.
+        assert_eq!(parse_log_filename("abcd1234.log."), None);
+        assert_eq!(parse_log_filename("abcd1234.logfoo"), None);
+    }
+
+    #[test]
+    fn scan_surfaces_orphan_logs_and_fix_respects_age() {
+        let _lock = lock_env();
+        let dir = TempDir::new().unwrap();
+        let prev = std::env::var("AGENT_TERM_STATE_DIR").ok();
+        std::env::set_var("AGENT_TERM_STATE_DIR", dir.path());
+
+        // Live daemon (this process): its log should NOT be orphan.
+        let live_id = "livelive1234";
+        fs::write(
+            dir.path().join(format!("{live_id}.pid")),
+            std::process::id().to_string(),
+        )
+        .unwrap();
+        fs::write(dir.path().join(format!("{live_id}.log")), b"live").unwrap();
+
+        // Two orphan logs: one fresh, one we'll backdate to old.
+        let fresh_id = "freshfresh1";
+        let old_id = "oldoldoldol";
+        fs::write(dir.path().join(format!("{fresh_id}.log")), b"fresh").unwrap();
+        fs::write(dir.path().join(format!("{old_id}.log")), b"old").unwrap();
+        // Rotated orphan log: ensure rotation segments are detected too.
+        fs::write(dir.path().join(format!("{old_id}.log.1")), b"old1").unwrap();
+
+        // Backdate the "old" entries by 10 days. Uses File::set_modified
+        // (stable since Rust 1.75) so we don't add a new dep just for tests.
+        let ten_days_ago = SystemTime::now() - std::time::Duration::from_secs(10 * 86_400);
+        for name in [format!("{old_id}.log"), format!("{old_id}.log.1")] {
+            let f = fs::OpenOptions::new()
+                .write(true)
+                .open(dir.path().join(&name))
+                .unwrap();
+            f.set_modified(ten_days_ago).unwrap();
+        }
+
+        let report = scan(&DoctorOptions {
+            fix: false,
+            json: false,
+            log_age_days: DEFAULT_LOG_AGE_DAYS,
+        });
+
+        let files: Vec<&str> = report.orphan_logs.iter().map(|l| l.file.as_str()).collect();
+        assert!(!files.iter().any(|f| f.starts_with(live_id)),
+            "live daemon's log should not be an orphan: got {files:?}");
+        assert!(files.contains(&format!("{fresh_id}.log").as_str()));
+        assert!(files.contains(&format!("{old_id}.log").as_str()));
+        assert!(files.contains(&format!("{old_id}.log.1").as_str()));
+
+        // --fix with 7-day threshold removes the old ones but keeps the fresh.
+        apply_fixes(&report, DEFAULT_LOG_AGE_DAYS);
+        assert!(dir.path().join(format!("{fresh_id}.log")).exists());
+        assert!(!dir.path().join(format!("{old_id}.log")).exists());
+        assert!(!dir.path().join(format!("{old_id}.log.1")).exists());
+        // Live daemon's log is never touched by orphan-log GC.
+        assert!(dir.path().join(format!("{live_id}.log")).exists());
+
+        // --fix with log_age_days=0 sweeps the remaining fresh orphan.
+        let report = scan(&DoctorOptions {
+            fix: true,
+            json: false,
+            log_age_days: 0,
+        });
+        apply_fixes(&report, 0);
+        assert!(!dir.path().join(format!("{fresh_id}.log")).exists());
+        assert!(dir.path().join(format!("{live_id}.log")).exists());
 
         match prev {
             Some(v) => std::env::set_var("AGENT_TERM_STATE_DIR", v),
