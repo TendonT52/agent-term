@@ -52,21 +52,21 @@ pub const DEFAULT_LOG_SEGMENTS: usize = 3;
 /// default. Setting the env var to `0` disables rotation (effectively
 /// unbounded log).
 pub fn log_size_from_env() -> u64 {
-    env::var("AGENT_TERMINAL_LOG_SIZE")
+    env::var("AGENT_TERM_LOG_SIZE")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(DEFAULT_LOG_SIZE)
 }
 
 pub fn log_segments_from_env() -> usize {
-    env::var("AGENT_TERMINAL_LOG_SEGMENTS")
+    env::var("AGENT_TERM_LOG_SEGMENTS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(DEFAULT_LOG_SEGMENTS)
 }
 
 pub fn timestamps_from_env() -> bool {
-    matches!(env::var("AGENT_TERMINAL_TIMESTAMPS").as_deref(), Ok("1"))
+    matches!(env::var("AGENT_TERM_TIMESTAMPS").as_deref(), Ok("1"))
 }
 
 /// Append-only writer that rotates the underlying file once it reaches

@@ -17,7 +17,7 @@ use crate::state::{
 
 #[derive(Parser)]
 #[command(
-    name = "agent-terminal",
+    name = "agent-term",
     version,
     about = "Detached, observable subprocess runner for AI agents"
 )]
@@ -44,7 +44,7 @@ pub enum Command {
         tags: Vec<String>,
         /// Prepend `[<ms_since_epoch>] ` to every line written to the log.
         /// Required for `tail --since`, `--until`, and the `slice` verb's
-        /// time-based selectors. Equivalent to AGENT_TERMINAL_TIMESTAMPS=1.
+        /// time-based selectors. Equivalent to AGENT_TERM_TIMESTAMPS=1.
         #[arg(long)]
         timestamps: bool,
         /// Command followed by its arguments. To run shell text, use `sh -c '...'`.
@@ -111,7 +111,7 @@ pub enum Command {
         /// Preserve the `[<ms>] ` prefix in emitted lines (default strips it).
         #[arg(long)]
         keep_timestamps: bool,
-        /// Sugar: forwards to `agent-terminal grep`. Use the full `grep` verb
+        /// Sugar: forwards to `agent-term grep`. Use the full `grep` verb
         /// for richer output.
         #[arg(long, value_name = "REGEX")]
         grep: Option<String>,
@@ -270,7 +270,7 @@ pub fn run(cli: Cli) -> ExitCode {
             around,
             limit,
         } => {
-            // `tail --grep PATTERN` is sugar over `agent-terminal grep`.
+            // `tail --grep PATTERN` is sugar over `agent-term grep`.
             if let Some(pat) = grep {
                 return crate::grep::run(crate::grep::GrepOptions {
                     id,
@@ -392,7 +392,7 @@ fn run_spawn(
         Some(s) if is_valid_id(&s) => s,
         Some(bad) => {
             eprintln!(
-                "agent-terminal: invalid --id {bad:?}: must be 1-64 chars, [a-z0-9_-] only"
+                "agent-term: invalid --id {bad:?}: must be 1-64 chars, [a-z0-9_-] only"
             );
             return ExitCode::from(1);
         }
@@ -404,7 +404,7 @@ fn run_spawn(
         None => match std::env::current_dir() {
             Ok(cwd) => canonicalize_project(&cwd),
             Err(e) => {
-                eprintln!("agent-terminal: spawn: cannot read $PWD: {e}");
+                eprintln!("agent-term: spawn: cannot read $PWD: {e}");
                 return ExitCode::from(1);
             }
         },
@@ -413,7 +413,7 @@ fn run_spawn(
 
     if let Some(ref n) = name {
         if let Err(msg) = validate_name(n) {
-            eprintln!("agent-terminal: spawn: {msg}");
+            eprintln!("agent-term: spawn: {msg}");
             return ExitCode::from(1);
         }
     }
@@ -421,7 +421,7 @@ fn run_spawn(
     let tags = match parse_tags(&raw_tags) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("agent-terminal: spawn: {e}");
+            eprintln!("agent-term: spawn: {e}");
             return ExitCode::from(1);
         }
     };
@@ -433,7 +433,7 @@ fn run_spawn(
         for (existing_id, m) in list_active_metas() {
             if m.project == project_str && m.name.as_deref() == Some(desired.as_str()) {
                 eprintln!(
-                    "agent-terminal: spawn: name {desired:?} already in use by id {existing_id}"
+                    "agent-term: spawn: name {desired:?} already in use by id {existing_id}"
                 );
                 return ExitCode::from(1);
             }
@@ -455,14 +455,14 @@ fn run_spawn(
             println!("{}", res.id);
             if res.already_running {
                 eprintln!(
-                    "agent-terminal: existing daemon for id {} reused",
+                    "agent-term: existing daemon for id {} reused",
                     res.id
                 );
             }
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("agent-terminal: spawn failed: {e}");
+            eprintln!("agent-term: spawn failed: {e}");
             ExitCode::from(1)
         }
     }
@@ -547,7 +547,7 @@ fn run_list(
             None => match std::env::current_dir() {
                 Ok(cwd) => canonicalize_project(&cwd),
                 Err(e) => {
-                    eprintln!("agent-terminal: list: cannot read $PWD: {e}");
+                    eprintln!("agent-term: list: cannot read $PWD: {e}");
                     return ExitCode::from(1);
                 }
             },
@@ -558,7 +558,7 @@ fn run_list(
     let tag_filters = match parse_tags(&raw_tags) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("agent-terminal: list: {e}");
+            eprintln!("agent-term: list: {e}");
             return ExitCode::from(1);
         }
     };
@@ -775,7 +775,7 @@ fn shell_join(argv: &[String]) -> String {
 
 fn run_status(id: &str) -> ExitCode {
     if !is_valid_id(id) {
-        eprintln!("agent-terminal: invalid id {id:?}");
+        eprintln!("agent-term: invalid id {id:?}");
         return ExitCode::from(1);
     }
     match status(id) {
@@ -784,7 +784,7 @@ fn run_status(id: &str) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("agent-terminal: status: {e}");
+            eprintln!("agent-term: status: {e}");
             ExitCode::from(1)
         }
     }
@@ -792,7 +792,7 @@ fn run_status(id: &str) -> ExitCode {
 
 fn run_kill(id: &str, signal: &str) -> ExitCode {
     if !is_valid_id(id) {
-        eprintln!("agent-terminal: invalid id {id:?}");
+        eprintln!("agent-term: invalid id {id:?}");
         return ExitCode::from(1);
     }
     // `kill` semantics: signal the child via the daemon, then ask the daemon
@@ -812,13 +812,13 @@ fn run_kill(id: &str, signal: &str) -> ExitCode {
         ) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("agent-terminal: kill: {e}");
+                eprintln!("agent-term: kill: {e}");
                 return ExitCode::from(1);
             }
         };
         if !resp.success {
             eprintln!(
-                "agent-terminal: kill: {}",
+                "agent-term: kill: {}",
                 resp.error.unwrap_or_else(|| "unknown error".into())
             );
             return ExitCode::from(1);
@@ -834,13 +834,13 @@ fn run_kill(id: &str, signal: &str) -> ExitCode {
     ) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("agent-terminal: kill: {e}");
+            eprintln!("agent-term: kill: {e}");
             return ExitCode::from(1);
         }
     };
     if !resp.success {
         eprintln!(
-            "agent-terminal: kill: {}",
+            "agent-term: kill: {}",
             resp.error.unwrap_or_else(|| "unknown error".into())
         );
         return ExitCode::from(1);

@@ -10,10 +10,10 @@ pub const SIDECAR_SUFFIXES: &[&str] = &[".pid", ".version", ".cmd", ".sock", ".m
 /// Resolves the directory where daemon sidecars (.pid, .sock, .log, etc.) live.
 ///
 /// Precedence:
-///   1. `$AGENT_TERMINAL_STATE_DIR` (explicit override)
-///   2. `$XDG_RUNTIME_DIR/agent-terminal`
-///   3. `~/.agent-terminal`
-///   4. `$TMPDIR/agent-terminal` (last resort, when no home is resolvable)
+///   1. `$AGENT_TERM_STATE_DIR` (explicit override)
+///   2. `$XDG_RUNTIME_DIR/agent-term`
+///   3. `~/.agent-term`
+///   4. `$TMPDIR/agent-term` (last resort, when no home is resolvable)
 pub fn get_state_dir() -> PathBuf {
     resolve_state_dir(dirs::home_dir)
 }
@@ -22,7 +22,7 @@ fn resolve_state_dir<F>(home_dir: F) -> PathBuf
 where
     F: FnOnce() -> Option<PathBuf>,
 {
-    if let Ok(dir) = env::var("AGENT_TERMINAL_STATE_DIR") {
+    if let Ok(dir) = env::var("AGENT_TERM_STATE_DIR") {
         if !dir.is_empty() {
             return PathBuf::from(dir);
         }
@@ -30,15 +30,15 @@ where
 
     if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
         if !runtime_dir.is_empty() {
-            return PathBuf::from(runtime_dir).join("agent-terminal");
+            return PathBuf::from(runtime_dir).join("agent-term");
         }
     }
 
     if let Some(home) = home_dir() {
-        return home.join(".agent-terminal");
+        return home.join(".agent-term");
     }
 
-    env::temp_dir().join("agent-terminal")
+    env::temp_dir().join("agent-term")
 }
 
 pub fn pid_path(id: &str) -> PathBuf {
@@ -137,7 +137,7 @@ mod tests {
     }
 
     fn clear_state_env() {
-        env::remove_var("AGENT_TERMINAL_STATE_DIR");
+        env::remove_var("AGENT_TERM_STATE_DIR");
         env::remove_var("XDG_RUNTIME_DIR");
     }
 
@@ -152,9 +152,9 @@ mod tests {
     #[test]
     fn explicit_override_wins() {
         let _lock = lock_env();
-        let _g = EnvGuard::capture(&["AGENT_TERMINAL_STATE_DIR", "XDG_RUNTIME_DIR"]);
+        let _g = EnvGuard::capture(&["AGENT_TERM_STATE_DIR", "XDG_RUNTIME_DIR"]);
         clear_state_env();
-        env::set_var("AGENT_TERMINAL_STATE_DIR", "/tmp/explicit-override");
+        env::set_var("AGENT_TERM_STATE_DIR", "/tmp/explicit-override");
         env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
 
         assert_eq!(
@@ -166,51 +166,51 @@ mod tests {
     #[test]
     fn empty_override_falls_through() {
         let _lock = lock_env();
-        let _g = EnvGuard::capture(&["AGENT_TERMINAL_STATE_DIR", "XDG_RUNTIME_DIR"]);
+        let _g = EnvGuard::capture(&["AGENT_TERM_STATE_DIR", "XDG_RUNTIME_DIR"]);
         clear_state_env();
-        env::set_var("AGENT_TERMINAL_STATE_DIR", "");
+        env::set_var("AGENT_TERM_STATE_DIR", "");
         env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
 
         assert_eq!(
             resolve_state_dir(fake_home("/home/user")),
-            PathBuf::from("/run/user/1000/agent-terminal")
+            PathBuf::from("/run/user/1000/agent-term")
         );
     }
 
     #[test]
     fn xdg_runtime_dir_when_no_override() {
         let _lock = lock_env();
-        let _g = EnvGuard::capture(&["AGENT_TERMINAL_STATE_DIR", "XDG_RUNTIME_DIR"]);
+        let _g = EnvGuard::capture(&["AGENT_TERM_STATE_DIR", "XDG_RUNTIME_DIR"]);
         clear_state_env();
         env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
 
         assert_eq!(
             resolve_state_dir(fake_home("/home/user")),
-            PathBuf::from("/run/user/1000/agent-terminal")
+            PathBuf::from("/run/user/1000/agent-term")
         );
     }
 
     #[test]
     fn home_fallback_when_no_xdg() {
         let _lock = lock_env();
-        let _g = EnvGuard::capture(&["AGENT_TERMINAL_STATE_DIR", "XDG_RUNTIME_DIR"]);
+        let _g = EnvGuard::capture(&["AGENT_TERM_STATE_DIR", "XDG_RUNTIME_DIR"]);
         clear_state_env();
 
         assert_eq!(
             resolve_state_dir(fake_home("/home/agentuser")),
-            PathBuf::from("/home/agentuser/.agent-terminal")
+            PathBuf::from("/home/agentuser/.agent-term")
         );
     }
 
     #[test]
     fn temp_dir_last_resort() {
         let _lock = lock_env();
-        let _g = EnvGuard::capture(&["AGENT_TERMINAL_STATE_DIR", "XDG_RUNTIME_DIR"]);
+        let _g = EnvGuard::capture(&["AGENT_TERM_STATE_DIR", "XDG_RUNTIME_DIR"]);
         clear_state_env();
 
         assert_eq!(
             resolve_state_dir(no_home()),
-            env::temp_dir().join("agent-terminal")
+            env::temp_dir().join("agent-term")
         );
     }
 

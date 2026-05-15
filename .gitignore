@@ -6,7 +6,7 @@
 /explain
 
 # Local state from manual testing
-/tmp/agent-terminal-*
+/tmp/agent-term-*
 
 # Editor / OS noise
 .DS_Store

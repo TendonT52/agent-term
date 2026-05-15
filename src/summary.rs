@@ -64,7 +64,7 @@ pub fn run(opts: SummaryOptions) -> ExitCode {
     } = opts;
 
     if !is_valid_id(&id) {
-        eprintln!("agent-terminal: summary: invalid id {id:?}");
+        eprintln!("agent-term: summary: invalid id {id:?}");
         return ExitCode::from(1);
     }
 
@@ -119,7 +119,7 @@ pub fn run(opts: SummaryOptions) -> ExitCode {
 
     let log = log_path(&id);
     if !log.exists() {
-        eprintln!("agent-terminal: summary: no log for id {id:?}");
+        eprintln!("agent-term: summary: no log for id {id:?}");
         return ExitCode::from(1);
     }
 
@@ -152,7 +152,7 @@ pub fn run(opts: SummaryOptions) -> ExitCode {
     let recent_since_ms = match parse_time_spec(recent_window_spec, now_ms) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("agent-terminal: summary: --recent-window: {e}");
+            eprintln!("agent-term: summary: --recent-window: {e}");
             return ExitCode::from(1);
         }
     };
@@ -163,14 +163,14 @@ pub fn run(opts: SummaryOptions) -> ExitCode {
     let err_re = match RegexBuilder::new(err_pat).build() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("agent-terminal: summary: --error-pattern: {e}");
+            eprintln!("agent-term: summary: --error-pattern: {e}");
             return ExitCode::from(1);
         }
     };
     let warn_re = match RegexBuilder::new(warn_pat).build() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("agent-terminal: summary: --warning-pattern: {e}");
+            eprintln!("agent-term: summary: --warning-pattern: {e}");
             return ExitCode::from(1);
         }
     };

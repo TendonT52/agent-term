@@ -34,7 +34,7 @@ pub fn run(opts: WaitOptions) -> ExitCode {
 
     if !is_valid_id(&id) {
         return fail_json_or_text(json, "invalid id", 1, |_| {
-            eprintln!("agent-terminal: invalid id {id:?}")
+            eprintln!("agent-term: invalid id {id:?}")
         });
     }
 
@@ -44,7 +44,7 @@ pub fn run(opts: WaitOptions) -> ExitCode {
             Ok(s) => s.trim_end_matches('\n').to_string(),
             Err(e) => {
                 return fail_json_or_text(json, &format!("read pattern-file: {e}"), 1, |_| {
-                    eprintln!("agent-terminal: wait: read --pattern-file {path}: {e}")
+                    eprintln!("agent-term: wait: read --pattern-file {path}: {e}")
                 });
             }
         },
@@ -53,12 +53,12 @@ pub fn run(opts: WaitOptions) -> ExitCode {
                 json,
                 "--pattern and --pattern-file are mutually exclusive",
                 1,
-                |m| eprintln!("agent-terminal: wait: {m}"),
+                |m| eprintln!("agent-term: wait: {m}"),
             );
         }
         (None, None) => {
             return fail_json_or_text(json, "--pattern or --pattern-file required", 1, |m| {
-                eprintln!("agent-terminal: wait: {m}")
+                eprintln!("agent-term: wait: {m}")
             });
         }
     };
@@ -67,7 +67,7 @@ pub fn run(opts: WaitOptions) -> ExitCode {
         Ok(r) => r,
         Err(e) => {
             return fail_json_or_text(json, &format!("bad regex: {e}"), 1, |m| {
-                eprintln!("agent-terminal: wait: {m}")
+                eprintln!("agent-term: wait: {m}")
             });
         }
     };
@@ -77,7 +77,7 @@ pub fn run(opts: WaitOptions) -> ExitCode {
             Ok(d) => Some(d),
             Err(e) => {
                 return fail_json_or_text(json, &e, 1, |m| {
-                    eprintln!("agent-terminal: wait: {m}")
+                    eprintln!("agent-term: wait: {m}")
                 });
             }
         },
@@ -247,7 +247,7 @@ fn emit_timeout(elapsed: Duration, json_mode: bool) -> ExitCode {
         );
     } else {
         eprintln!(
-            "agent-terminal: wait: timed out after {} ms",
+            "agent-term: wait: timed out after {} ms",
             elapsed.as_millis()
         );
     }
@@ -268,10 +268,10 @@ fn emit_child_exited(info: ChildExit, elapsed: Duration, json_mode: bool) -> Exi
     } else {
         match info.code {
             Some(c) => eprintln!(
-                "agent-terminal: wait: process exited (code {c}) before pattern matched"
+                "agent-term: wait: process exited (code {c}) before pattern matched"
             ),
             None => eprintln!(
-                "agent-terminal: wait: process exited before pattern matched"
+                "agent-term: wait: process exited before pattern matched"
             ),
         }
     }

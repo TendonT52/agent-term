@@ -37,7 +37,7 @@ pub fn run(opts: SliceOptions) -> ExitCode {
     } = opts;
 
     if !is_valid_id(&id) {
-        eprintln!("agent-terminal: slice: invalid id {id:?}");
+        eprintln!("agent-term: slice: invalid id {id:?}");
         return ExitCode::from(1);
     }
 
@@ -45,7 +45,7 @@ pub fn run(opts: SliceOptions) -> ExitCode {
     let cursor_mode = from_cursor.is_some() || to_cursor.is_some();
     if time_mode && cursor_mode {
         eprintln!(
-            "agent-terminal: slice: time selectors (--from/--to) and byte selectors \
+            "agent-term: slice: time selectors (--from/--to) and byte selectors \
              (--from-cursor/--to-cursor) are mutually exclusive"
         );
         return ExitCode::from(1);
@@ -53,13 +53,13 @@ pub fn run(opts: SliceOptions) -> ExitCode {
 
     let log = log_path(&id);
     if !log.exists() {
-        eprintln!("agent-terminal: slice: no log for id {id:?}");
+        eprintln!("agent-term: slice: no log for id {id:?}");
         return ExitCode::from(1);
     }
     let mut file = match fs::File::open(&log) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("agent-terminal: slice: {e}");
+            eprintln!("agent-term: slice: {e}");
             return ExitCode::from(1);
         }
     };
@@ -79,7 +79,7 @@ pub fn run(opts: SliceOptions) -> ExitCode {
     let from_ms = match from.as_deref().map(|s| parse_time_spec(s, now)) {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: slice: --from: {e}");
+            eprintln!("agent-term: slice: --from: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -87,7 +87,7 @@ pub fn run(opts: SliceOptions) -> ExitCode {
     let to_ms = match to.as_deref().map(|s| parse_time_spec(s, now)) {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: slice: --to: {e}");
+            eprintln!("agent-term: slice: --to: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -106,7 +106,7 @@ fn run_cursor_slice(
     let len = match file.seek(SeekFrom::End(0)) {
         Ok(n) => n,
         Err(e) => {
-            eprintln!("agent-terminal: slice: {e}");
+            eprintln!("agent-term: slice: {e}");
             return ExitCode::from(1);
         }
     };
@@ -114,18 +114,18 @@ fn run_cursor_slice(
     let to = to_cursor.unwrap_or(len).min(len);
     if from > to {
         eprintln!(
-            "agent-terminal: slice: --from-cursor {from} is past --to-cursor {to}"
+            "agent-term: slice: --from-cursor {from} is past --to-cursor {to}"
         );
         return ExitCode::from(1);
     }
     if let Err(e) = file.seek(SeekFrom::Start(from)) {
-        eprintln!("agent-terminal: slice: {e}");
+        eprintln!("agent-term: slice: {e}");
         return ExitCode::from(1);
     }
     let want = (to - from) as usize;
     let mut buf = vec![0u8; want];
     if let Err(e) = file.read_exact(&mut buf) {
-        eprintln!("agent-terminal: slice: {e}");
+        eprintln!("agent-term: slice: {e}");
         return ExitCode::from(1);
     }
 
@@ -157,12 +157,12 @@ fn run_time_slice(
     json: bool,
 ) -> ExitCode {
     if let Err(e) = file.seek(SeekFrom::Start(0)) {
-        eprintln!("agent-terminal: slice: {e}");
+        eprintln!("agent-term: slice: {e}");
         return ExitCode::from(1);
     }
     let mut all = Vec::new();
     if let Err(e) = file.read_to_end(&mut all) {
-        eprintln!("agent-terminal: slice: {e}");
+        eprintln!("agent-term: slice: {e}");
         return ExitCode::from(1);
     }
 
@@ -201,8 +201,8 @@ fn run_time_slice(
     let time_selectors_used = from_ms.is_some() || to_ms.is_some();
     if time_selectors_used && !saw_timestamped {
         eprintln!(
-            "agent-terminal: slice: --from/--to require timestamped logs; \
-             spawn with --timestamps (or AGENT_TERMINAL_TIMESTAMPS=1)"
+            "agent-term: slice: --from/--to require timestamped logs; \
+             spawn with --timestamps (or AGENT_TERM_TIMESTAMPS=1)"
         );
         return ExitCode::from(1);
     }
@@ -243,7 +243,7 @@ fn emit<F: Fn(&[u8], u64) -> serde_json::Value>(
         let mut stdout = io::stdout().lock();
         if let Err(e) = stdout.write_all(&bytes) {
             if e.kind() != io::ErrorKind::BrokenPipe {
-                eprintln!("agent-terminal: slice: {e}");
+                eprintln!("agent-term: slice: {e}");
                 return ExitCode::from(1);
             }
         }

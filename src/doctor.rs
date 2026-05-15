@@ -226,7 +226,7 @@ fn print_human(report: &DoctorReport) {
         && report.orphans.is_empty()
         && report.warnings.is_empty()
     {
-        println!("agent-terminal: clean (no live, no stale, no orphans)");
+        println!("agent-term: clean (no live, no stale, no orphans)");
         return;
     }
 
@@ -303,7 +303,7 @@ fn misuse_warning() -> Option<String> {
     if count >= MISUSE_COUNT {
         Some(format!(
             "Detected {count} short-lived daemons (<{}s each) in the past hour. \
-             For one-shot commands, run them through `bash` directly instead of `agent-terminal spawn`.",
+             For one-shot commands, run them through `bash` directly instead of `agent-term spawn`.",
             MISUSE_DURATION_MS / 1000
         ))
     } else {
@@ -348,8 +348,8 @@ mod tests {
     fn misuse_warning_fires_at_threshold() {
         let _lock = lock_env();
         let dir = TempDir::new().unwrap();
-        let prev = std::env::var("AGENT_TERMINAL_STATE_DIR").ok();
-        std::env::set_var("AGENT_TERMINAL_STATE_DIR", dir.path());
+        let prev = std::env::var("AGENT_TERM_STATE_DIR").ok();
+        std::env::set_var("AGENT_TERM_STATE_DIR", dir.path());
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -418,8 +418,8 @@ mod tests {
         assert!(misuse_warning().is_none());
 
         match prev {
-            Some(v) => std::env::set_var("AGENT_TERMINAL_STATE_DIR", v),
-            None => std::env::remove_var("AGENT_TERMINAL_STATE_DIR"),
+            Some(v) => std::env::set_var("AGENT_TERM_STATE_DIR", v),
+            None => std::env::remove_var("AGENT_TERM_STATE_DIR"),
         }
     }
 }

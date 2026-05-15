@@ -63,7 +63,7 @@ pub fn ensure_daemon(
             });
         }
         eprintln!(
-            "agent-terminal: daemon version mismatch for id {id}, restarting"
+            "agent-term: daemon version mismatch for id {id}, restarting"
         );
         kill_stale_daemon(id);
         // fall through to a fresh spawn below.
@@ -76,22 +76,22 @@ pub fn ensure_daemon(
     let tags_json = serde_json::to_string(opts.tags).map_err(|e| e.to_string())?;
 
     let mut cmd = Command::new(&exe);
-    cmd.env("AGENT_TERMINAL_DAEMON", "1")
-        .env("AGENT_TERMINAL_ID", id)
-        .env("AGENT_TERMINAL_CMD", &argv_json)
-        .env("AGENT_TERMINAL_PROJECT", opts.project)
-        .env("AGENT_TERMINAL_TAGS", &tags_json)
+    cmd.env("AGENT_TERM_DAEMON", "1")
+        .env("AGENT_TERM_ID", id)
+        .env("AGENT_TERM_CMD", &argv_json)
+        .env("AGENT_TERM_PROJECT", opts.project)
+        .env("AGENT_TERM_TAGS", &tags_json)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     if let Some(n) = opts.name {
-        cmd.env("AGENT_TERMINAL_NAME", n);
+        cmd.env("AGENT_TERM_NAME", n);
     }
     if let Some(p) = opts.started_by_pid {
-        cmd.env("AGENT_TERMINAL_STARTED_BY_PID", p.to_string());
+        cmd.env("AGENT_TERM_STARTED_BY_PID", p.to_string());
     }
     if opts.timestamps {
-        cmd.env("AGENT_TERMINAL_TIMESTAMPS", "1");
+        cmd.env("AGENT_TERM_TIMESTAMPS", "1");
     }
 
     #[cfg(unix)]

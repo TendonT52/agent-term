@@ -271,7 +271,7 @@ async fn run_main_loop(
     // future is stable across select! polls — a re-created future on each
     // poll iteration would never accumulate elapsed time and never fire
     // (the #1101 bug).
-    let idle_ms: Option<u64> = std::env::var("AGENT_TERMINAL_IDLE_TIMEOUT_MS")
+    let idle_ms: Option<u64> = std::env::var("AGENT_TERM_IDLE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|&v| v > 0);
@@ -326,7 +326,7 @@ async fn run_main_loop(
                 exit_reason = ExitReason::Signal;
                 break;
             }
-            // Idle branches — only armed when AGENT_TERMINAL_IDLE_TIMEOUT_MS > 0.
+            // Idle branches — only armed when AGENT_TERM_IDLE_TIMEOUT_MS > 0.
             _ = async {
                 match idle_sleep_pin {
                     Some(ref mut s) => s.as_mut().await,
@@ -358,7 +358,7 @@ fn write_meta(
     child_pid: u32,
     log: &std::path::Path,
 ) -> std::io::Result<()> {
-    let project = std::env::var("AGENT_TERMINAL_PROJECT").unwrap_or_else(|_| {
+    let project = std::env::var("AGENT_TERM_PROJECT").unwrap_or_else(|_| {
         std::env::current_dir()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default()
@@ -366,14 +366,14 @@ fn write_meta(
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let name = std::env::var("AGENT_TERMINAL_NAME")
+    let name = std::env::var("AGENT_TERM_NAME")
         .ok()
         .filter(|s| !s.is_empty());
-    let tags: BTreeMap<String, String> = std::env::var("AGENT_TERMINAL_TAGS")
+    let tags: BTreeMap<String, String> = std::env::var("AGENT_TERM_TAGS")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let started_by_pid = std::env::var("AGENT_TERMINAL_STARTED_BY_PID")
+    let started_by_pid = std::env::var("AGENT_TERM_STARTED_BY_PID")
         .ok()
         .and_then(|s| s.parse::<u32>().ok());
 

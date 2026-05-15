@@ -50,7 +50,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
     } = opts;
 
     if !is_valid_id(&id) {
-        eprintln!("agent-terminal: invalid id {id:?}");
+        eprintln!("agent-term: invalid id {id:?}");
         return ExitCode::from(1);
     }
 
@@ -64,7 +64,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
         json,
         since.is_some() || until.is_some(),
     ) {
-        eprintln!("agent-terminal: tail: {msg}");
+        eprintln!("agent-term: tail: {msg}");
         return ExitCode::from(1);
     }
 
@@ -74,7 +74,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
     let since_ms = match since.as_deref().map(|s| parse_time_spec(s, now_ms)) {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: tail: --since: {e}");
+            eprintln!("agent-term: tail: --since: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -82,7 +82,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
     let until_ms = match until.as_deref().map(|s| parse_time_spec(s, now_ms)) {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: tail: --until: {e}");
+            eprintln!("agent-term: tail: --until: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -91,7 +91,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
     let bytes_n = match bytes.as_deref().map(parse_bytes_suffix) {
         Some(Ok(n)) => Some(n),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: tail: --bytes: {e}");
+            eprintln!("agent-term: tail: --bytes: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -99,7 +99,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
 
     let log = log_path(&id);
     if !log.exists() {
-        eprintln!("agent-terminal: no log for id {id:?}");
+        eprintln!("agent-term: no log for id {id:?}");
         return ExitCode::from(1);
     }
 
@@ -109,7 +109,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
     let mut file = match fs::File::open(&log) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
     };
@@ -141,18 +141,18 @@ pub fn run(opts: TailOptions) -> ExitCode {
         let len = file.seek(SeekFrom::End(0)).unwrap_or(0);
         if pos > len {
             eprintln!(
-                "agent-terminal: tail: cursor {pos} past EOF ({len}); log was rotated or truncated"
+                "agent-term: tail: cursor {pos} past EOF ({len}); log was rotated or truncated"
             );
             return ExitCode::from(1);
         }
         if let Err(e) = file.seek(SeekFrom::Start(pos)) {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         let res = drain_to_stdout(&mut file, stripper.as_mut(), &mut stdout);
         if let Err(e) = res {
             if e.kind() != io::ErrorKind::BrokenPipe {
-                eprintln!("agent-terminal: tail: {e}");
+                eprintln!("agent-term: tail: {e}");
                 return ExitCode::from(1);
             }
         }
@@ -189,7 +189,7 @@ pub fn run(opts: TailOptions) -> ExitCode {
 
     if let Err(e) = initial_result {
         if e.kind() != io::ErrorKind::BrokenPipe {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         return ExitCode::SUCCESS;
@@ -530,7 +530,7 @@ fn emit_time_window(
     out: &mut impl Write,
 ) -> ExitCode {
     if let Err(e) = file.seek(SeekFrom::Start(0)) {
-        eprintln!("agent-terminal: tail: {e}");
+        eprintln!("agent-term: tail: {e}");
         return ExitCode::from(1);
     }
 
@@ -538,7 +538,7 @@ fn emit_time_window(
     let mut lines_emitted: u64 = 0;
     let mut buf = Vec::<u8>::new();
     if let Err(e) = file.read_to_end(&mut buf) {
-        eprintln!("agent-terminal: tail: {e}");
+        eprintln!("agent-term: tail: {e}");
         return ExitCode::from(1);
     }
     let mut saw_timestamped_line = false;
@@ -576,8 +576,8 @@ fn emit_time_window(
 
     if !saw_timestamped_line {
         eprintln!(
-            "agent-terminal: tail: --since/--until require timestamped logs; \
-             spawn with --timestamps (or AGENT_TERMINAL_TIMESTAMPS=1)"
+            "agent-term: tail: --since/--until require timestamped logs; \
+             spawn with --timestamps (or AGENT_TERM_TIMESTAMPS=1)"
         );
         return ExitCode::from(1);
     }
@@ -604,7 +604,7 @@ fn emit_time_window(
         println!("{}", body);
     } else if let Err(e) = out.write_all(&final_bytes) {
         if e.kind() != io::ErrorKind::BrokenPipe {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
     }
@@ -629,7 +629,7 @@ fn emit_json(
     let len = match file.seek(SeekFrom::End(0)) {
         Ok(n) => n,
         Err(e) => {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
     };
@@ -654,13 +654,13 @@ fn emit_json(
     // 2. Compute the byte slice to read.
     let cursor_start = if let Some(pos) = cursor {
         if let Err(e) = file.seek(SeekFrom::Start(pos)) {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         pos
     } else if let Some(n) = head {
         if let Err(e) = file.seek(SeekFrom::Start(0)) {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         // For head, we'll cap by line count during read, so cursor_start = 0.
@@ -671,14 +671,14 @@ fn emit_json(
         match (lines, bytes_n) {
             (Some(n), _) => {
                 if let Err(e) = seek_to_last_n_lines(file, n) {
-                    eprintln!("agent-terminal: tail: {e}");
+                    eprintln!("agent-term: tail: {e}");
                     return ExitCode::from(1);
                 }
                 file.stream_position().unwrap_or(0)
             }
             (_, Some(n)) => {
                 if let Err(e) = seek_to_last_n_bytes(file, n) {
-                    eprintln!("agent-terminal: tail: {e}");
+                    eprintln!("agent-term: tail: {e}");
                     return ExitCode::from(1);
                 }
                 file.stream_position().unwrap_or(0)
@@ -687,19 +687,19 @@ fn emit_json(
         }
     } else if let Some(n) = lines {
         if let Err(e) = seek_to_last_n_lines(file, n) {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         file.stream_position().unwrap_or(0)
     } else if let Some(n) = bytes_n {
         if let Err(e) = seek_to_last_n_bytes(file, n) {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         file.stream_position().unwrap_or(0)
     } else {
         if let Err(e) = file.seek(SeekFrom::Start(0)) {
-            eprintln!("agent-terminal: tail: {e}");
+            eprintln!("agent-term: tail: {e}");
             return ExitCode::from(1);
         }
         0
@@ -716,7 +716,7 @@ fn emit_json(
                 Ok(0) => break,
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("agent-terminal: tail: {e}");
+                    eprintln!("agent-term: tail: {e}");
                     return ExitCode::from(1);
                 }
             };
@@ -735,7 +735,7 @@ fn emit_json(
             }
         }
     } else if let Err(e) = file.read_to_end(&mut buf) {
-        eprintln!("agent-terminal: tail: {e}");
+        eprintln!("agent-term: tail: {e}");
         return ExitCode::from(1);
     }
 
@@ -862,7 +862,7 @@ fn follow_loop(
             Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("agent-terminal: tail: {e}");
+                eprintln!("agent-term: tail: {e}");
                 return ExitCode::from(1);
             }
         }

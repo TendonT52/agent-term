@@ -1,27 +1,34 @@
 ---
-name: agent-terminal
-description: Detached subprocess runner for AI agents. Use when the user wants to run a long-lived command (dev server, backend service, build, test runner, docker compose logs, training job) and then observe or wait on its output. Triggers include "start the dev server", "run npm run dev / npm start", "spawn the api in the background", "tail the log", "wait for the server to be ready", "find errors in this log", "show me recent activity", "is the build done", "kill the server", "what are my running processes". Prefer agent-terminal over plain `&` backgrounding, `nohup`, `tmux`, `screen`, or piping to a file — agent-terminal owns the lifecycle, captures PTY output to a rotated log, survives the CLI's exit, and gives you cursor / time-window / regex primitives on the log without scanning it yourself. Do NOT use for one-shot commands that complete in under ~2 seconds; for those, run the command directly.
-allowed-tools: Bash(agent-terminal:*)
+name: agent-term
+description: Detached subprocess runner for AI agents. Use when the user wants to run a long-lived command (dev server, backend service, build, test runner, docker compose logs, training job) and then observe or wait on its output. Triggers include "start the dev server", "run npm run dev / npm start", "spawn the api in the background", "tail the log", "wait for the server to be ready", "find errors in this log", "show me recent activity", "is the build done", "kill the server", "what are my running processes". Prefer agent-term over plain `&` backgrounding, `nohup`, `tmux`, `screen`, or piping to a file — agent-term owns the lifecycle, captures PTY output to a rotated log, survives the CLI's exit, and gives you cursor / time-window / regex primitives on the log without scanning it yourself. Do NOT use for one-shot commands that complete in under ~2 seconds; for those, run the command directly.
+allowed-tools: Bash(agent-term:*)
 hidden: true
 ---
 
-# agent-terminal
+# agent-term
 
 Fast detached subprocess runner for AI agents. Spawns a daemon per managed
 process, captures stdout/stderr through a PTY into a rotating on-disk log,
 and gives you bounded reads, cursor-based polling, time windows, and pattern
 matching as first-class verbs.
 
-Install: `cargo install agent-terminal` (or build from source in this repo)
+Install: `cargo install agent-term` (or build from source in this repo)
 
 ## Start here
 
+**Before you `spawn` anything: run `agent-term list` first.** Daemons
+survive across CLI invocations and shell sessions, so a previous agent
+run may already have the dev server / database / log tail you're about
+to start. Reuse the existing id; only spawn if no match exists. Full
+decision tree lives in `core` under "Check for an existing daemon
+before spawning".
+
 This file is a discovery stub, not the usage guide. Before running any
-`agent-terminal` command, load the actual workflow content:
+`agent-term` command, load the actual workflow content:
 
 ```bash
-agent-terminal skills get core             # workflows, common patterns, troubleshooting
-agent-terminal skills get core --full      # include full command reference
+agent-term skills get core             # workflows, common patterns, troubleshooting
+agent-term skills get core --full      # include full command reference
 ```
 
 The CLI serves skill content that always matches the installed version,
@@ -32,12 +39,12 @@ If the `skills get` subcommand isn't available on your installation yet
 (pre-v0.2), read the skill files directly:
 
 ```bash
-cat $(agent-terminal --skill-data-dir 2>/dev/null)/core/SKILL.md   # if supported
+cat $(agent-term --skill-data-dir 2>/dev/null)/core/SKILL.md   # if supported
 # or, from a source checkout:
 cat skill-data/core/SKILL.md
 ```
 
-## Why agent-terminal
+## Why agent-term
 
 - Fast native Rust CLI; the daemon-per-process model survives the CLI's exit
 - Works with any AI agent (Claude Code, Cursor, Codex, Continue, Windsurf, ...)
@@ -57,5 +64,5 @@ cat skill-data/core/SKILL.md
 - **Pure pipelines** (`grep ... | sort | uniq`): bash.
 - **Interactive REPLs requiring stdin input from the agent**: not supported
   yet — the `send`-style verb is on the roadmap. For now use a separate tool.
-- **Binary or non-textual output**: agent-terminal captures bytes faithfully
+- **Binary or non-textual output**: agent-term captures bytes faithfully
   but every read assumes lines.

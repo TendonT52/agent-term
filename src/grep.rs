@@ -49,14 +49,14 @@ pub fn run(opts: GrepOptions) -> ExitCode {
     } = opts;
 
     if !is_valid_id(&id) {
-        eprintln!("agent-terminal: grep: invalid id {id:?}");
+        eprintln!("agent-term: grep: invalid id {id:?}");
         return ExitCode::from(1);
     }
 
     let pattern_text = match resolve_pattern(pattern, pattern_file) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("agent-terminal: grep: {e}");
+            eprintln!("agent-term: grep: {e}");
             return ExitCode::from(1);
         }
     };
@@ -64,7 +64,7 @@ pub fn run(opts: GrepOptions) -> ExitCode {
     let regex = match RegexBuilder::new(&pattern_text).multi_line(multiline).build() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("agent-terminal: grep: bad regex: {e}");
+            eprintln!("agent-term: grep: bad regex: {e}");
             return ExitCode::from(1);
         }
     };
@@ -73,7 +73,7 @@ pub fn run(opts: GrepOptions) -> ExitCode {
     let since_ms = match since.as_deref().map(|s| parse_time_spec(s, now)) {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: grep: --since: {e}");
+            eprintln!("agent-term: grep: --since: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -81,7 +81,7 @@ pub fn run(opts: GrepOptions) -> ExitCode {
     let until_ms = match until.as_deref().map(|s| parse_time_spec(s, now)) {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
-            eprintln!("agent-terminal: grep: --until: {e}");
+            eprintln!("agent-term: grep: --until: {e}");
             return ExitCode::from(1);
         }
         None => None,
@@ -89,23 +89,23 @@ pub fn run(opts: GrepOptions) -> ExitCode {
 
     let log = log_path(&id);
     if !log.exists() {
-        eprintln!("agent-terminal: grep: no log for id {id:?}");
+        eprintln!("agent-term: grep: no log for id {id:?}");
         return ExitCode::from(1);
     }
     let mut file = match fs::File::open(&log) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("agent-terminal: grep: {e}");
+            eprintln!("agent-term: grep: {e}");
             return ExitCode::from(1);
         }
     };
     if let Err(e) = file.seek(SeekFrom::Start(0)) {
-        eprintln!("agent-terminal: grep: {e}");
+        eprintln!("agent-term: grep: {e}");
         return ExitCode::from(1);
     }
     let mut all = Vec::new();
     if let Err(e) = file.read_to_end(&mut all) {
-        eprintln!("agent-terminal: grep: {e}");
+        eprintln!("agent-term: grep: {e}");
         return ExitCode::from(1);
     }
 

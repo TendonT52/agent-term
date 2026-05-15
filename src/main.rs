@@ -28,7 +28,7 @@ fn main() -> ExitCode {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
-    if env::var("AGENT_TERMINAL_DAEMON").as_deref() == Ok("1") {
+    if env::var("AGENT_TERM_DAEMON").as_deref() == Ok("1") {
         return run_daemon_mode();
     }
 
@@ -37,9 +37,9 @@ fn main() -> ExitCode {
 }
 
 fn run_daemon_mode() -> ExitCode {
-    let id = env::var("AGENT_TERMINAL_ID").unwrap_or_else(|_| "default".to_string());
+    let id = env::var("AGENT_TERM_ID").unwrap_or_else(|_| "default".to_string());
 
-    let argv: Vec<String> = match env::var("AGENT_TERMINAL_CMD") {
+    let argv: Vec<String> = match env::var("AGENT_TERM_CMD") {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => Vec::new(),
     };

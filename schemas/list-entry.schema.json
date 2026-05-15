@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-terminal/schemas/list-entry.schema.json",
-  "title": "agent-terminal list entry",
-  "description": "Schema for a single object in the JSON array emitted by `agent-terminal list --json`.",
+  "$id": "https://agent-term/schemas/list-entry.schema.json",
+  "title": "agent-term list entry",
+  "description": "Schema for a single object in the JSON array emitted by `agent-term list --json`.",
   "type": "object",
   "additionalProperties": false,
   "required": [

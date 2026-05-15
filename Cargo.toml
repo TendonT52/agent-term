@@ -1,17 +1,17 @@
 [package]
-name = "agent-terminal"
+name = "agent-term"
 version = "0.1.0"
 edition = "2021"
 description = "Detached, observable subprocess runner for AI agents"
 license = "Apache-2.0"
-repository = "https://github.com/TendonT52/agent-terminal"
-homepage = "https://github.com/TendonT52/agent-terminal"
+repository = "https://github.com/TendonT52/agent-term"
+homepage = "https://github.com/TendonT52/agent-term"
 readme = "README.md"
 keywords = ["cli", "agent", "subprocess", "logs", "daemon"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "agent-terminal"
+name = "agent-term"
 path = "src/main.rs"
 
 [dependencies]
