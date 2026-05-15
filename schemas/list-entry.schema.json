@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-terminal/schemas/list-entry.schema.json",
+  "title": "agent-terminal list entry",
+  "description": "Schema for a single object in the JSON array emitted by `agent-terminal list --json`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "project",
+    "tags",
+    "cmd",
+    "cwd",
+    "started_at",
+    "started_by_pid",
+    "log_path",
+    "state",
+    "child_pid",
+    "exit_code",
+    "uptime_ms"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped on backwards-incompatible field changes."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "name": {
+      "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }]
+    },
+    "project": {
+      "type": "string",
+      "description": "Canonicalised filesystem path."
+    },
+    "tags": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "cmd": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "cwd": { "type": "string" },
+    "started_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Seconds since the Unix epoch."
+    },
+    "started_by_pid": {
+      "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+    },
+    "log_path": { "type": "string" },
+    "state": {
+      "type": "string",
+      "enum": ["running", "exited"]
+    },
+    "child_pid": {
+      "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+    },
+    "exit_code": {
+      "oneOf": [{ "type": "integer" }, { "type": "null" }]
+    },
+    "uptime_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

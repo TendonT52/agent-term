@@ -1,0 +1,15 @@
+# Rust build artifacts
+/target/
+
+# Vendored / reference material — not part of this repo
+/agent-browser/
+/explain
+
+# Local state from manual testing
+/tmp/agent-terminal-*
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
