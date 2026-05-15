@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-term/schemas/wait.schema.json",
+  "title": "agent-term wait --json output",
+  "description": "JSON envelope emitted by `agent-term wait --json`. The CLI exit code mirrors the envelope: 0 on match, 1 on timeout, 2 on process_exited, non-zero on error.",
+  "oneOf": [
+    { "$ref": "#/$defs/matched" },
+    { "$ref": "#/$defs/timeout" },
+    { "$ref": "#/$defs/processExited" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "matched": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matched", "line", "elapsed_ms"],
+      "properties": {
+        "matched": { "const": true },
+        "line": {
+          "type": "string",
+          "description": "The matching line (timestamp prefix stripped, trailing CR/LF stripped)."
+        },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "timeout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matched", "reason", "elapsed_ms"],
+      "properties": {
+        "matched": { "const": false },
+        "reason": { "const": "timeout" },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "processExited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matched", "reason", "elapsed_ms"],
+      "properties": {
+        "matched": { "const": false },
+        "reason": { "const": "process_exited" },
+        "code": {
+          "oneOf": [{ "type": "integer" }, { "type": "null" }],
+          "description": "Child exit code if known. Null if the child was killed by a signal or exited before the daemon recorded a code."
+        },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matched", "reason", "error"],
+      "properties": {
+        "matched": { "const": false },
+        "reason": { "const": "error" },
+        "error": {
+          "type": "string",
+          "description": "Human-readable failure reason (invalid pattern, missing log, IPC failure, ...)."
+        }
+      }
+    }
+  }
+}

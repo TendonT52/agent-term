@@ -2,7 +2,7 @@
 /target/
 
 # Vendored / reference material — not part of this repo
-/agent-browser/
+/agent-browser
 /explain
 
 # Local state from manual testing

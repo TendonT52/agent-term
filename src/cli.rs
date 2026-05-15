@@ -137,6 +137,17 @@ pub enum Command {
         /// Match across the whole log buffer with `^`/`$` honoring line boundaries.
         #[arg(long)]
         multiline: bool,
+        /// Strip ANSI/CSI/OSC escape sequences before matching. Dev servers
+        /// (Vite, Next, Cargo) colour their output, which inserts `\x1b[...]`
+        /// bytes inside otherwise-literal phrases like `ready in 3688 ms` and
+        /// breaks naive patterns. Default off to preserve byte-exact matching.
+        #[arg(long)]
+        strip_ansi: bool,
+        /// Match against the entire captured line including any `[<ms>]` prefix
+        /// added by `spawn --timestamps`. Default strips the prefix so patterns
+        /// like `^READY$` keep working when timestamps are toggled on.
+        #[arg(long)]
+        match_full_line: bool,
         /// Emit a machine-readable JSON result on stdout instead of plain text.
         #[arg(long)]
         json: bool,
@@ -233,6 +244,26 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print bundled skill documentation. The content is embedded at compile
+    /// time so it always matches the installed version.
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SkillsAction {
+    /// List the names of every bundled skill.
+    List,
+    /// Print a bundled skill's SKILL.md to stdout.
+    Get {
+        /// Skill name (e.g. `core`).
+        name: String,
+        /// Also emit any reference files bundled alongside the skill.
+        #[arg(long)]
+        full: bool,
+    },
 }
 
 pub fn run(cli: Cli) -> ExitCode {
@@ -307,6 +338,8 @@ pub fn run(cli: Cli) -> ExitCode {
             pattern_file,
             timeout,
             multiline,
+            strip_ansi,
+            match_full_line,
             json,
         } => crate::wait::run(crate::wait::WaitOptions {
             id,
@@ -314,6 +347,8 @@ pub fn run(cli: Cli) -> ExitCode {
             pattern_file,
             timeout,
             multiline,
+            strip_ansi,
+            match_full_line,
             json,
         }),
         Command::Grep {
@@ -376,6 +411,10 @@ pub fn run(cli: Cli) -> ExitCode {
         Command::Doctor { fix, json } => {
             crate::doctor::run(crate::doctor::DoctorOptions { fix, json })
         }
+        Command::Skills { action } => match action {
+            SkillsAction::List => crate::skills::run_list(),
+            SkillsAction::Get { name, full } => crate::skills::run_get(&name, full),
+        },
     }
 }
 
@@ -721,15 +760,19 @@ fn query_state(id: &str) -> (String, Option<u32>, Option<i32>) {
 
 fn render_table(entries: &[ListEntry]) {
     println!(
-        "{:<14} {:<14} {:<28} {:<8} {:<8} CMD",
-        "ID", "NAME", "PROJECT", "STATE", "UPTIME"
+        "{:<14} {:<14} {:<32} {:<8} {:<8} CMD",
+        "ID", "NAME", "CWD", "STATE", "UPTIME"
     );
     for e in entries {
+        // Prefer cwd (where the child actually runs) over project (the
+        // scoping path). They match in the default case where --project
+        // isn't passed.
+        let location = if e.cwd.is_empty() { &e.project } else { &e.cwd };
         println!(
-            "{:<14} {:<14} {:<28} {:<8} {:<8} {}",
+            "{:<14} {:<14} {:<32} {:<8} {:<8} {}",
             truncate(&e.id, 13),
             truncate(e.name.as_deref().unwrap_or("-"), 13),
-            truncate(&e.project, 27),
+            truncate_path(location, 31),
             truncate(&e.state, 7),
             format_uptime(e.uptime_ms),
             shell_join(&e.cmd)
@@ -745,6 +788,19 @@ fn truncate(s: &str, max: usize) -> String {
         t.push('…');
         t
     }
+}
+
+/// Like `truncate` but keeps the tail of the string. Useful for paths,
+/// where the last few components carry more identity than the long
+/// shared prefix (e.g. `…repos/foo/wt-feature-x` beats `/Users/tendo…`).
+fn truncate_path(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let take = max.saturating_sub(1);
+    let tail: String = chars[chars.len() - take..].iter().collect();
+    format!("…{tail}")
 }
 
 fn format_uptime(ms: u64) -> String {

@@ -32,6 +32,7 @@ struct SummaryReport {
     id: String,
     name: Option<String>,
     project: Option<String>,
+    cwd: Option<String>,
     state: String,
     child_pid: Option<u32>,
     exit_code: Option<i32>,
@@ -115,6 +116,7 @@ pub fn run(opts: SummaryOptions) -> ExitCode {
     let meta = Meta::load(&meta_path(&id)).ok();
     let name = meta.as_ref().and_then(|m| m.name.clone());
     let project = meta.as_ref().map(|m| m.project.clone());
+    let cwd = meta.as_ref().map(|m| m.cwd.clone());
     let started_at = meta.as_ref().map(|m| m.started_at);
 
     let log = log_path(&id);
@@ -182,6 +184,7 @@ pub fn run(opts: SummaryOptions) -> ExitCode {
         id: id.clone(),
         name,
         project,
+        cwd,
         state,
         child_pid,
         exit_code,
@@ -339,6 +342,17 @@ fn print_human(r: &SummaryReport) {
         "project         {}",
         r.project.as_deref().unwrap_or("-")
     );
+    // Show cwd separately when it differs from project; otherwise it's
+    // redundant noise.
+    match (r.cwd.as_deref(), r.project.as_deref()) {
+        (Some(cwd), Some(proj)) if cwd != proj => {
+            println!("cwd             {cwd}");
+        }
+        (Some(cwd), None) => {
+            println!("cwd             {cwd}");
+        }
+        _ => {}
+    }
     let child = r.child_pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
     let exit = match r.exit_code {
         Some(c) => format!(" exit_code={}", c),

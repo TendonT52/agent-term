@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-term/schemas/doctor.schema.json",
+  "title": "agent-term doctor --json output",
+  "description": "State-directory diagnostic report. Empty arrays mean no issues in that category.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["live", "stale", "orphans", "warnings"],
+  "properties": {
+    "live": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/liveEntry" },
+      "description": "Daemons currently running, with daemon pid and child pid."
+    },
+    "stale": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/staleEntry" },
+      "description": "Sidecar bundles whose daemon process is gone. --fix removes them."
+    },
+    "orphans": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/orphanEntry" },
+      "description": "Child processes whose parent daemon died (e.g. via kill -9) and which didn't take SIGHUP. --fix SIGTERMs then SIGKILLs them."
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Free-form advisories: misuse heuristics (≥ 10 short-lived daemons in the last hour), version skew, permission issues, etc."
+    }
+  },
+  "$defs": {
+    "liveEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "daemon_pid", "child_pid", "name", "project"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "daemon_pid": { "type": "integer", "minimum": 1 },
+        "child_pid": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "name": {
+          "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }]
+        },
+        "project": {
+          "type": "string",
+          "description": "Canonicalised filesystem path of the project that owns the daemon."
+        }
+      }
+    },
+    "staleEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reason"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the sidecar is considered stale (e.g. `daemon pid 9999 not alive`)."
+        }
+      }
+    },
+    "orphanEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "child_pid"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "child_pid": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ mod ids;
 mod ipc;
 mod meta;
 mod pty;
+mod skills;
 mod slice;
 mod state;
 mod summary;

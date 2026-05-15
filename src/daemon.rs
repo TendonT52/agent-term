@@ -27,8 +27,10 @@ use crate::state::{
 };
 
 /// How long the daemon stays up after the child exits so observers can collect
-/// the exit code via `status` before sidecars vanish.
-const POST_EXIT_LINGER: Duration = Duration::from_secs(2);
+/// the exit code via `status` before sidecars vanish. After this window the
+/// sidecar is gone, but `summary` falls back to `recent.jsonl` to surface
+/// state/exit_code/reason for short-lived daemons.
+const POST_EXIT_LINGER: Duration = Duration::from_secs(5);
 
 /// Grace period between SIGTERM and SIGKILL when tearing down the child on
 /// idle/close/signal exit paths.
@@ -86,6 +88,9 @@ struct CleanupGuard {
     /// misuse heuristic measures user-facing runtime.
     useful_until: Option<Instant>,
     reason: ExitReason,
+    /// Child exit status, captured when the child reaper fires. Surfaced in
+    /// `recent.jsonl` so `summary` can answer post-linger queries from disk.
+    exit_code: Option<i32>,
 }
 
 impl CleanupGuard {
@@ -96,6 +101,7 @@ impl CleanupGuard {
             start: Instant::now(),
             useful_until: None,
             reason: ExitReason::Error,
+            exit_code: None,
         }
     }
 
@@ -103,8 +109,9 @@ impl CleanupGuard {
         self.reason = reason;
     }
 
-    fn mark_child_exited(&mut self) {
+    fn mark_child_exited(&mut self, code: Option<i32>) {
         self.useful_until = Some(Instant::now());
+        self.exit_code = code;
     }
 }
 
@@ -114,7 +121,14 @@ impl Drop for CleanupGuard {
         let exited_at = now_secs();
         let until = self.useful_until.unwrap_or_else(Instant::now);
         let duration_ms = until.duration_since(self.start).as_millis() as u64;
-        append_recent_jsonl(&self.id, self.started_at, exited_at, duration_ms, self.reason);
+        append_recent_jsonl(
+            &self.id,
+            self.started_at,
+            exited_at,
+            duration_ms,
+            self.reason,
+            self.exit_code,
+        );
     }
 }
 
@@ -131,6 +145,7 @@ fn append_recent_jsonl(
     exited_at: u64,
     duration_ms: u64,
     reason: ExitReason,
+    exit_code: Option<i32>,
 ) {
     let entry = json!({
         "id": id,
@@ -138,6 +153,7 @@ fn append_recent_jsonl(
         "exited_at": exited_at,
         "duration_ms": duration_ms,
         "reason": reason,
+        "exit_code": exit_code,
     });
     let mut line = serde_json::to_string(&entry).unwrap_or_default();
     line.push('\n');
@@ -305,7 +321,7 @@ async fn run_main_loop(
                 sh.state = ChildState::Exited { code };
                 linger_deadline = Some(Instant::now() + POST_EXIT_LINGER);
                 exit_reason = ExitReason::ChildExited;
-                guard.mark_child_exited();
+                guard.mark_child_exited(code);
             }
             _ = async { tokio::time::sleep_until(sleep_until.unwrap()).await }, if sleep_until.is_some() => {
                 break;

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-term/schemas/summary.schema.json",
+  "title": "agent-term summary --json output",
+  "description": "Health snapshot for a managed daemon. Cheap to call (one IPC round-trip). The recommended first call for any investigation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "project",
+    "state",
+    "child_pid",
+    "exit_code",
+    "started_at",
+    "uptime_ms",
+    "log_bytes",
+    "log_lines",
+    "segments",
+    "last_line_age_ms",
+    "tail_cursor",
+    "recent"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped on backwards-incompatible field changes."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "name": {
+      "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }]
+    },
+    "project": {
+      "oneOf": [{ "type": "string" }, { "type": "null" }],
+      "description": "Canonicalised filesystem path; null if meta is missing."
+    },
+    "state": {
+      "type": "string",
+      "enum": ["running", "exited", "unknown"]
+    },
+    "child_pid": {
+      "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+    },
+    "exit_code": {
+      "oneOf": [{ "type": "integer" }, { "type": "null" }],
+      "description": "Set only when state == \"exited\"."
+    },
+    "started_at": {
+      "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }],
+      "description": "Seconds since the Unix epoch."
+    },
+    "uptime_ms": { "type": "integer", "minimum": 0 },
+    "log_bytes": { "type": "integer", "minimum": 0 },
+    "log_lines": { "type": "integer", "minimum": 0 },
+    "segments": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of log segments on disk (current + rotated)."
+    },
+    "last_line_age_ms": {
+      "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }],
+      "description": "Milliseconds since the last captured line. Null if no lines have ever been written."
+    },
+    "tail_cursor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Current EOF; pass to `tail --since-cursor` to resume from here."
+    },
+    "recent": {
+      "oneOf": [{ "$ref": "#/$defs/recentStats" }, { "type": "null" }]
+    }
+  },
+  "$defs": {
+    "recentStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["since_ms", "lines_scanned", "errors", "warnings", "mode"],
+      "properties": {
+        "since_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Width of the scan window in ms."
+        },
+        "lines_scanned": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "mode": {
+          "type": "string",
+          "enum": ["time-window", "tail-bytes"],
+          "description": "How the scan was bounded. `time-window` requires --timestamps spawn; `tail-bytes` is the byte-bounded fallback."
+        }
+      }
+    }
+  }
+}

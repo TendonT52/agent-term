@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-term/schemas/slice.schema.json",
+  "title": "agent-term slice --json output",
+  "description": "JSON envelope emitted by `agent-term slice --json`. Two variants: cursor mode (--from-cursor/--to-cursor) and time mode (--from/--to).",
+  "oneOf": [
+    { "$ref": "#/$defs/cursorEnvelope" },
+    { "$ref": "#/$defs/timeEnvelope" }
+  ],
+  "$defs": {
+    "cursorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_cursor", "to_cursor", "lines_emitted", "bytes_emitted", "content"],
+      "properties": {
+        "from_cursor": { "type": "integer", "minimum": 0 },
+        "to_cursor": { "type": "integer", "minimum": 0 },
+        "lines_emitted": { "type": "integer", "minimum": 0 },
+        "bytes_emitted": { "type": "integer", "minimum": 0 },
+        "content": { "type": "string" }
+      }
+    },
+    "timeEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines_emitted", "bytes_emitted", "content"],
+      "properties": {
+        "from_ms": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "to_ms": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "lines_emitted": { "type": "integer", "minimum": 0 },
+        "bytes_emitted": { "type": "integer", "minimum": 0 },
+        "content": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-term/schemas/tail.schema.json",
+  "title": "agent-term tail --json output",
+  "description": "JSON envelope emitted by `agent-term tail --json`. Two variants: cursor / bounded reads carry a `cursor` field; time-window reads (--since/--until) carry `since_ms`/`until_ms` and omit `cursor`. Stale-cursor reads (cursor past EOF) add `cursor_stale: true` and `stale_reason`.",
+  "oneOf": [
+    { "$ref": "#/$defs/cursorEnvelope" },
+    { "$ref": "#/$defs/staleCursorEnvelope" },
+    { "$ref": "#/$defs/timeWindowEnvelope" }
+  ],
+  "$defs": {
+    "cursorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursor_start", "cursor", "lines_emitted", "bytes_emitted", "content"],
+      "properties": {
+        "cursor_start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Byte offset where this read began."
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Byte offset to pass back on the next --since-cursor call."
+        },
+        "lines_emitted": { "type": "integer", "minimum": 0 },
+        "bytes_emitted": { "type": "integer", "minimum": 0 },
+        "content": {
+          "type": "string",
+          "description": "UTF-8 lossy rendering of the captured bytes."
+        }
+      }
+    },
+    "staleCursorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cursor_start",
+        "cursor",
+        "cursor_stale",
+        "stale_reason",
+        "lines_emitted",
+        "bytes_emitted",
+        "content"
+      ],
+      "properties": {
+        "cursor_start": { "type": "integer", "minimum": 0 },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Current EOF — reset and resume polling from here."
+        },
+        "cursor_stale": { "const": true },
+        "stale_reason": { "type": "string" },
+        "lines_emitted": { "const": 0 },
+        "bytes_emitted": { "const": 0 },
+        "content": { "const": "" }
+      }
+    },
+    "timeWindowEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines_emitted", "bytes_emitted", "content"],
+      "properties": {
+        "since_ms": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }],
+          "description": "Inclusive lower bound (ms since epoch). Null if --since was omitted."
+        },
+        "until_ms": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }],
+          "description": "Inclusive upper bound (ms since epoch). Null if --until was omitted."
+        },
+        "lines_emitted": { "type": "integer", "minimum": 0 },
+        "bytes_emitted": { "type": "integer", "minimum": 0 },
+        "content": { "type": "string" }
+      }
+    }
+  }
+}
