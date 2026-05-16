@@ -2,32 +2,68 @@
 
 A detached, observable subprocess runner for AI agents.
 
-`agent-term` is a small Rust CLI that lets an AI agent (or any script)
-launch long-running commands — dev servers, build watchers, training jobs,
-background workers — and then come back later, from any shell session, to
-read their output, search it, wait for a specific line to appear, or kill
-them cleanly. The processes you start outlive the agent's turn; they are
-not attached to a terminal, do not get orphaned when the agent exits, and
-clean up after themselves.
+`agent-term` is a small Rust CLI that lets an AI agent start a
+long-running command — a dev server, build watcher, backend, training
+job — and then *come back to use it*. The agent can wait for a
+readiness line, tail the log, search it for errors, or kill the process
+cleanly, from any future shell session. The subprocess outlives the
+agent's turn, doesn't get orphaned when the agent's shell exits, and
+cleans up after itself when no one needs it.
 
 ## Why
 
-AI agents that run shell commands have a hard time with anything that
-doesn't exit. Start `npm run dev` in a normal shell and one of two
-things happens:
+Ask an AI agent to "start the dev server, wait for it to be ready, then
+check the homepage." It will fail in one of two ways, every time.
 
-1. The agent waits for it to finish — and it never finishes.
-2. The agent backgrounds it with `&` — and it dies, or worse, leaks,
-   when the agent's shell session ends.
+1. It runs `npm run dev` and **hangs forever**, waiting for the command
+   to exit. A dev server never exits — that's the point.
+2. It backgrounds with `&` and **loses control of the process**. As
+   soon as the agent's shell session ends, the process either dies with
+   the shell, or worse: it gets reparented to PID 1 and leaks — still
+   holding the port, still eating memory, invisible to the next turn.
 
 Neither is acceptable when the agent needs to *use* the thing it just
-started (hit the dev server, tail the build log, wait for "compiled
-successfully" before running tests).
+started:
 
-`agent-term` solves this the same way a process supervisor does: the
-subprocess is owned by a separate, detached manager — not by the agent's
-shell. The agent talks to the manager through a tiny CLI: spawn, wait,
-tail, grep, summary, kill.
+- wait for `ready in 1.2s` before running integration tests
+- tail a Vite watcher to see if the last save compiled
+- follow `docker compose logs api` and grep for the first FATAL
+- run a long training job in the background while doing other work
+- come back tomorrow, from a fresh session, and check on the same process
+
+A bare shell can't hold any of these for an agent. The process has to
+outlive a single command, stay reachable from a *different* shell
+session later, and clean itself up when no one needs it.
+
+## What agent-term does
+
+The same thing a process supervisor does, with an agent-shaped CLI on
+top.
+
+`agent-term spawn -- npm run dev` doesn't run the command as a child of
+your shell. It hands it to a small detached manager — `PPID=1`, no
+controlling terminal, stdio redirected to `/dev/null` — that owns it
+for as long as it stays useful. The child runs under a PTY so
+line-buffered programs (node, python, npm) flush output normally. All
+output is captured to a rotating log on disk. The agent talks to the
+manager through one CLI from any future shell session:
+
+- `spawn` — start the subprocess, get back an id
+- `wait` — block until a regex matches in the log, with `--timeout`.
+  Exit code tells you match / timeout / process-already-exited
+- `tail` / `slice` — bounded log reads (`--lines`, `--bytes`, byte
+  cursors, time windows)
+- `grep` — pattern-match with surrounding context and a hard `--limit`
+- `summary` — ~200-token JSON health snapshot: state, size, last-line
+  age, recent errors
+- `kill` — graceful TERM, brief grace period, then KILL
+- `list` / `doctor` — discover and clean up
+
+The verbs are built for **agents reading logs**, not humans scrolling
+them. Every read is bounded so a 50 MB log doesn't blow the agent's
+context window. Cursors answer "what's new since I last looked?"
+without re-reading the file. `summary` lets the agent decide what to
+investigate before reading a single line.
 
 ## Quick start
 
@@ -191,7 +227,7 @@ by [`agent-browser`](https://github.com/vercel-labs/agent-browser):
 
 ## Status
 
-What ships in v0.1.0:
+What ships in v1.0.0:
 
 - Detached daemon with PTY-attached child, Unix-socket IPC, signal handling.
 - `spawn` / `list` / `status` / `kill` / `wait` / `tail` / `grep` /
@@ -203,7 +239,7 @@ What ships in v0.1.0:
 - `schemas/list-entry.schema.json` — formal JSON schema for `list --json` output.
 - 94 unit tests, `cargo clippy -- -D warnings` clean.
 
-Not yet in scope for v0.1:
+Not yet in scope for v1.0:
 
 - Windows support.
 - Stdin / keystroke injection into the child (the `send` verb).
