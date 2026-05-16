@@ -12,28 +12,37 @@ cleans up after itself when no one needs it.
 
 ## Why
 
-Ask an AI agent to "start the dev server, wait for it to be ready, then
-check the homepage." It will fail in one of two ways, every time.
+Picture the most common agent task: *"start the dev server, hit
+`/products`, fix any errors you find."*
 
-1. It runs `npm run dev` and **hangs forever**, waiting for the command
+The agent runs `npm run dev`. Two outcomes, both broken:
+
+1. **Foreground.** The agent **hangs forever**, waiting for the command
    to exit. A dev server never exits — that's the point.
-2. It backgrounds with `&` and **loses control of the process**. As
-   soon as the agent's shell session ends, the process either dies with
-   the shell, or worse: it gets reparented to PID 1 and leaks — still
-   holding the port, still eating memory, invisible to the next turn.
+2. **Background with `&`.** The agent moves on, hits `/products`, gets
+   back a 500. Now it needs to read the dev server's stack trace to
+   know what broke — **but the log streamed to a terminal the agent
+   can't see.** Backgrounding hides output the same way it hides the
+   process. The agent is blind to the very thing it just started, and
+   its only recourse is to kill the server and re-run from scratch.
 
-Neither is acceptable when the agent needs to *use* the thing it just
-started:
+Redirecting to a file (`npm run dev > out.log 2>&1 &`) trades one
+problem for two: the process can still get orphaned when the shell
+exits, and now the agent is hand-rolling tail / grep / rotate /
+cleanup on a log that may be 50 MB by the time it gets read.
+
+The same shape shows up everywhere an agent touches a long-running
+thing:
 
 - wait for `ready in 1.2s` before running integration tests
 - tail a Vite watcher to see if the last save compiled
 - follow `docker compose logs api` and grep for the first FATAL
-- run a long training job in the background while doing other work
-- come back tomorrow, from a fresh session, and check on the same process
+- run a long training job while the agent does other work
+- come back tomorrow, from a fresh session, to check on the same process
 
 A bare shell can't hold any of these for an agent. The process has to
-outlive a single command, stay reachable from a *different* shell
-session later, and clean itself up when no one needs it.
+outlive a single command, stay **observable** from any future shell
+session, and clean itself up when no one needs it.
 
 ## What agent-term does
 
