@@ -2,77 +2,67 @@
 
 A detached, observable subprocess runner for AI agents.
 
-`agent-term` is a small Rust CLI that lets an AI agent start a
-long-running command — a dev server, build watcher, backend, training
-job — and then *come back to use it*. The agent can wait for a
-readiness line, tail the log, search it for errors, or kill the process
-cleanly, from any future shell session. The subprocess outlives the
-agent's turn, doesn't get orphaned when the agent's shell exits, and
-cleans up after itself when no one needs it.
+`agent-term` lets an AI agent run a long-lived command — a dev server,
+a build watcher, a backend, a training job — and then read its output
+later. The process keeps running between commands, doesn't get lost
+when the shell exits, and can be inspected, searched, waited on, or
+killed from any new shell session.
 
-## Why
+## The problem
 
-Picture the most common agent task: *"start the dev server, hit
-`/products`, fix any errors you find."*
+AI agents talk to your computer through a shell. That works fine for
+commands that start, finish, and print everything before exiting —
+`ls`, `git log`, `cargo build`. It breaks the moment the command is a
+**server**.
 
-The agent runs `npm run dev`. Two outcomes, both broken:
+Ask an agent: *"start the dev server, open `/products`, and fix
+whatever's wrong."*
 
-1. **Foreground.** The agent **hangs forever**, waiting for the command
-   to exit. A dev server never exits — that's the point.
-2. **Background with `&`.** The agent moves on, hits `/products`, gets
-   back a 500. Now it needs to read the dev server's stack trace to
-   know what broke — **but the log streamed to a terminal the agent
-   can't see.** Backgrounding hides output the same way it hides the
-   process. The agent is blind to the very thing it just started, and
-   its only recourse is to kill the server and re-run from scratch.
+The agent types `npm run dev`. Now what?
 
-Redirecting to a file (`npm run dev > out.log 2>&1 &`) trades one
-problem for two: the process can still get orphaned when the shell
-exits, and now the agent is hand-rolling tail / grep / rotate /
-cleanup on a log that may be 50 MB by the time it gets read.
+- If it waits for the command to finish, it waits forever. Dev servers
+  don't finish.
+- If it backgrounds the command with `&`, the agent can move on — but
+  it can no longer see what the server is printing. So when
+  `/products` returns a 500, the agent has nowhere to read the stack
+  trace from. Its only option is to kill the server and run it again,
+  hoping to catch the error this time.
 
-The same shape shows up everywhere an agent touches a long-running
-thing:
+The agent needs four things at once, and plain shell can't give it
+all four:
 
-- wait for `ready in 1.2s` before running integration tests
-- tail a Vite watcher to see if the last save compiled
-- follow `docker compose logs api` and grep for the first FATAL
-- run a long training job while the agent does other work
-- come back tomorrow, from a fresh session, to check on the same process
+1. **Start** a process without blocking on it.
+2. **Read what it printed** — now, ten seconds from now, or tomorrow.
+3. **Wait** for a specific line (e.g. `ready in 1.2s`) before continuing.
+4. **Stop** it cleanly, without leaking it as an orphan.
 
-A bare shell can't hold any of these for an agent. The process has to
-outlive a single command, stay **observable** from any future shell
-session, and clean itself up when no one needs it.
+That's what `agent-term` is for.
 
 ## What agent-term does
 
-The same thing a process supervisor does, with an agent-shaped CLI on
-top.
+`agent-term spawn -- npm run dev` runs your command, but not as a
+child of your shell. It hands the command to a small detached manager
+that keeps running after your shell exits, and captures every line
+the process prints to a log on disk.
 
-`agent-term spawn -- npm run dev` doesn't run the command as a child of
-your shell. It hands it to a small detached manager — `PPID=1`, no
-controlling terminal, stdio redirected to `/dev/null` — that owns it
-for as long as it stays useful. The child runs under a PTY so
-line-buffered programs (node, python, npm) flush output normally. All
-output is captured to a rotating log on disk. The agent talks to the
-manager through one CLI from any future shell session:
+From any shell session — the same one, the next one, or one tomorrow —
+the agent talks to the manager through a few simple verbs:
 
-- `spawn` — start the subprocess, get back an id
-- `wait` — block until a regex matches in the log, with `--timeout`.
-  Exit code tells you match / timeout / process-already-exited
-- `tail` / `slice` — bounded log reads (`--lines`, `--bytes`, byte
-  cursors, time windows)
-- `grep` — pattern-match with surrounding context and a hard `--limit`
-- `summary` — ~200-token JSON health snapshot: state, size, last-line
-  age, recent errors
-- `kill` — graceful TERM, brief grace period, then KILL
-- `list` / `doctor` — discover and clean up
+| Verb | What it does |
+| --- | --- |
+| `spawn` | Start the process. Returns an id. |
+| `wait` | Block until a line matches a regex, with a timeout. |
+| `tail` | Read the last N lines of the log (always bounded). |
+| `grep` | Search the log with surrounding context. |
+| `summary` | One-shot health check: state, log size, recent errors. |
+| `kill` | Stop the process cleanly. |
+| `list` / `doctor` | See what's running, clean up stale state. |
 
-The verbs are built for **agents reading logs**, not humans scrolling
-them. Every read is bounded so a 50 MB log doesn't blow the agent's
-context window. Cursors answer "what's new since I last looked?"
-without re-reading the file. `summary` lets the agent decide what to
-investigate before reading a single line.
+Every read is bounded, so an agent investigating a 50 MB log doesn't
+blow its context window. Cursors answer *"what's new since I last
+looked?"* without re-reading the file. `summary` returns a small JSON
+snapshot so the agent can decide what to investigate before reading a
+single log line.
 
 ## Quick start
 
